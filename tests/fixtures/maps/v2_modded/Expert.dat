@@ -1,0 +1,29 @@
+{
+  "_version": "2.2.0",
+  "_customData": {
+    "_BPMChanges": [{"_time": 8, "_BPM": 200, "_beatsPerBar": 4, "_metronomeOffset": 4}],
+    "_bookmarks": [{"_time": 4, "_name": "drop"}]
+  },
+  "_notes": [
+    {"_time": 4, "_lineIndex": 1, "_lineLayer": 0, "_type": 0, "_cutDirection": 1},
+    {"_time": 8, "_lineIndex": 2, "_type": 1, "_cutDirection": 1},
+    {"_time": 8.5, "_lineIndex": 1, "_lineLayer": 0, "_type": 0, "_cutDirection": 1},
+    {"_time": 9, "_lineIndex": 2, "_lineLayer": 0, "_type": 1, "_cutDirection": 1},
+    {"_time": 9.5, "_lineIndex": 1500, "_lineLayer": 0, "_type": 0, "_cutDirection": 1},
+    {"_time": 10, "_lineIndex": 4, "_lineLayer": 0, "_type": 1, "_cutDirection": 1},
+    {"_time": 10.5, "_lineIndex": 1, "_lineLayer": 0, "_type": 0, "_cutDirection": 1150},
+    {"_time": 11, "_lineIndex": 1, "_lineLayer": 1, "_type": 0, "_cutDirection": 0, "_customData": {"_position": [0, 1]}},
+    {"_lineIndex": 1, "_lineLayer": 1, "_type": 1, "_cutDirection": 0},
+    {"_time": 12, "_lineIndex": 1, "_lineLayer": 1, "_type": 2, "_cutDirection": 0}
+  ],
+  "_obstacles": [
+    {"_time": 12, "_lineIndex": 0, "_type": 4001, "_duration": 1, "_width": 1},
+    {"_time": 13, "_lineIndex": 0, "_type": 0, "_duration": 1, "_width": 1}
+  ],
+  "_events": [
+    {"_time": 0, "_type": 1, "_value": 1},
+    {"_time": 8, "_type": 4, "_value": 2000123456, "_floatValue": 1},
+    {"_time": 9, "_type": 14, "_value": 4}
+  ],
+  "_waypoints": [{"_time": 1, "_lineIndex": 1, "_lineLayer": 0, "_offsetDirection": 1}]
+}
