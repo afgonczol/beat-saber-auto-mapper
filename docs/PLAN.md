@@ -12,7 +12,9 @@ as a local web UI with an in-browser preview.
 | Generation approach | **ML-first.** A transformer trained on curated community maps. Hand-written rules are used only as constraints during decoding and as evaluation metrics, never as the note generator. |
 | Interface | Python CLI core, plus a FastAPI server and a browser UI with a 3D preview |
 | Modes (v1) | Standard, One Saber, 90°, 360°. All five difficulties. |
-| Lighting (v1) | Vanilla basic events, v3 group lighting and Chroma colours |
+| Lighting (v1) | Vanilla basic events, v3 group lighting and Chroma colours. **The default is v3 group lighting**, which works in the unmodded game. Chroma is opt-in, and is only listed as a *suggestion* (never a requirement) so maps still load without the mod. |
+| Target setup | PC Beat Saber **1.45.3** via Air Link, currently unmodded (the old 1.37.5 plugins were disabled by the update). Install path: `C:\Program Files (x86)\Steam\steamapps\common\Beat Saber\Beat Saber_Data\CustomLevels`. |
+| Mapping style | A **flowy ↔ technical slider** (0..1), passed to the model as a style conditioning token. See WS3/WS4/WS7. |
 | Language / stack | Python 3.11+, PyTorch, librosa; web UI in Vite + React + TypeScript + three.js |
 | Hardware | One RTX 3090 (24 GB). This caps the model at roughly 50–150M parameters in bf16. Only one training job runs at a time. |
 | Output format | Write **v3** difficulty files and a v2 Info.dat by default (the widest support across game versions and editors). v4 is optional. Read v2, v3 and v4. |
@@ -123,6 +125,11 @@ data/ checkpoints/ out/   (gitignored)
 - **Builder**: parse with WS1, analyze audio with WS2, snap to the 24-tick grid (reject
   maps with too many off-grid notes), compute stats (NPS, parity errors), tokenize with
   WS4, then write sharded Parquet or NumPy files plus a `manifest.parquet`.
+- **Style labels** (for the flowy ↔ technical slider): record BeatLeader's per-difficulty
+  `techRating` (also pass/acc ratings) where a map has been rated. Compute a heuristic
+  **tech score** for every map: mean angle change between consecutive swings, reset and
+  crossover rate, dot ratio and rhythm irregularity. Calibrate it against the BeatLeader
+  ratings, then normalize it to 0..1 within each difficulty.
 - **Splits are by song, not by map**, so different mapper versions of the same song stay
   in one split. Dedupe by audio fingerprint, falling back to normalized title+artist.
 - Targets: dataset v0 is about 2k maps (enough to debug training) and v1 is 10–25k maps.
@@ -133,8 +140,9 @@ data/ checkpoints/ out/   (gitignored)
 
 ### WS4: Tokenizer (`tokenizer/`)
 - Windows of 16 beats (384 ticks), each conditioned on the previous window's tail tokens.
-- Prefix tokens: `<CHAR_*> <DIFF_*> <NPS_bucket> <MODE_FLAGS>`. Later, optional mapper-style
-  buckets from clustering.
+- Prefix tokens: `<CHAR_*> <DIFF_*> <NPS_bucket> <STYLE_bucket> <MODE_FLAGS>`. `STYLE_0..4`
+  buckets the 0..1 tech score from WS3. It is randomly dropped during training so the model
+  also works with "no preference" and supports classifier-free guidance on style.
 - Event tokens sorted by time: `TIME_t` (0..383) followed by an object:
   - note: `RED|BLUE  POS_x_y(12)  DIR_d(9)` (an angle-offset token only when it is nonzero)
   - bomb: `BOMB POS_x_y`; wall: `WALL X_x W_w H_y_h DUR_bucket`
@@ -190,9 +198,12 @@ code changes.
 - **StubGenerator**: places notes on beats with naive parity. It exists only so WS1, WS8,
   WS9 and WS10 can integrate before a trained model exists. It is clearly labelled and is
   never shipped as a "mode".
-- CLI: `bsmapper generate song.mp3 --modes Standard,360Degree --lighting chroma --zip`,
-  plus `data scrape|build`, `train`, `evaluate`, `serve`. An optional
-  `--install <CustomLevels path>` copies the result into the game.
+- CLI: `bsmapper generate song.mp3 --modes Standard,360Degree --lighting v3 --style 0.3 --zip`,
+  plus `data scrape|build`, `train`, `evaluate`, `serve`. `--style` runs from 0 (flowy) to
+  1 (technical); leave it out for no preference.
+- `--install` copies the result into the game. By default it targets the Steam path in §1, and
+  the path can be overridden in `~/.bsmapper/config.toml`.
+- If `--lighting chroma` is chosen and `Plugins/Chroma.dll` is missing, print a warning.
 
 ### WS8: Lighting (`lighting/`)
 - **L0 rule baseline** (ships first, and is the fallback when there is no checkpoint): a
@@ -214,8 +225,8 @@ code changes.
   /jobs/{id}/events` (SSE progress), `GET /jobs/{id}/map` (JSON for the preview), `GET
   /jobs/{id}/download` (zip), `POST /jobs/{id}/regenerate` (one difficulty, new
   seed/temperature). Jobs run in a single GPU worker queue.
-- Web: drag-and-drop a song, then pick modes, difficulties and lighting style, then follow
-  progress. The preview is a three.js track synced to the audio, with difficulty tabs and
+- Web: drag-and-drop a song, then pick modes, difficulties, lighting style and a
+  **flowy ↔ technical slider**, then follow progress. The preview is a three.js track synced to the audio, with difficulty tabs and
   simple light rendering. A side panel shows rule warnings, plus "Regenerate", "Download"
   and "Install to game".
 - It is built against the OpenAPI spec and a mock server first, so it does not wait on the model.
@@ -299,7 +310,8 @@ keeps `main` green and updates this plan.
 | Format churn (game updates) | Isolated in WS1, with writers per version and v3 as the default |
 
 ## 9. Open questions (answer when relevant)
-1. Which Beat Saber game version and mods do you play on (PC/Quest, Chroma installed)? This decides the default writer version and whether Chroma is on by default.
-2. Your CustomLevels path, for the `--install` option.
-3. Should trained weights be published publicly at M8?
-4. Any favourite mappers or styles to bias towards (e.g. flowy vs. technical)? This could become a style token.
+1. Should trained weights be published publicly at M8?
+2. Before testing Chroma lighting in-game (M5), reinstall mods for 1.45.3 (e.g. with BSManager or ModAssistant).
+3. Should v4 be the default writer? Your game (1.45.3) reads v4 natively; v3 is kept as the default for editor compatibility.
+
+Answered: PC + Air Link on 1.45.3, CustomLevels path, and a flowy ↔ technical slider (§1).
