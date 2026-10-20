@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data, weights and outputs: never commit
+data/
+checkpoints/
+runs/
+out/
+*.zip
+*.egg
+*.ogg
+*.mp3
+*.wav
+*.flac
+*.pt
+*.ckpt
+*.safetensors
+
+# Web
+web/node_modules/
+web/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bsmapper"
+version = "0.0.1"
+description = "ML-based automatic Beat Saber map generator with difficulties and lightshows"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "typer>=0.12",
+    "rich>=13",
+    "httpx>=0.27",
+    "mutagen>=1.47",
+]
+
+[project.optional-dependencies]
+audio = ["librosa>=0.10", "soundfile>=0.12"]
+ml = ["torch>=2.4", "pyarrow>=16", "pyyaml>=6", "tensorboard>=2.17"]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+bsmapper = "bsmapper.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bsmapper"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: needs audio files, network or a GPU; skipped in CI",
+]
+addopts = "-m 'not slow'"
