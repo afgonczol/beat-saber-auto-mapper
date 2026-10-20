@@ -34,3 +34,6 @@ web/dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Agent session worktrees
+.claude/worktrees/
