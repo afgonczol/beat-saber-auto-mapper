@@ -14,6 +14,7 @@ as a local web UI with an in-browser preview.
 | Modes (v1) | Standard, One Saber, 90°, 360°. All five difficulties. |
 | Lighting (v1) | Vanilla basic events, v3 group lighting and Chroma colours. **The default is v3 group lighting**, which works in the unmodded game. Chroma is opt-in, and is only listed as a *suggestion* (never a requirement) so maps still load without the mod. |
 | Target setup | PC Beat Saber **1.45.3** via Air Link, currently unmodded (the old 1.37.5 plugins were disabled by the update). Install path: `C:\Program Files (x86)\Steam\steamapps\common\Beat Saber\Beat Saber_Data\CustomLevels`. |
+| Difficulty priority | Hard, Expert and Expert+ quality matter most. **Easy is low priority**: it may be weaker (dataset v0 has only 440 Standard Easy difficulties), so don't spend oversampling or tuning effort on it. |
 | Mapping style | A **flowy ↔ technical slider** (0..1), passed to the model as a style conditioning token. See WS3/WS4/WS7. |
 | Language / stack | Python 3.11+, PyTorch, librosa; web UI in Vite + React + TypeScript + three.js |
 | Hardware | One RTX 3090 (24 GB). This caps the model at roughly 50–150M parameters in bf16. Only one training job runs at a time. |
@@ -181,7 +182,7 @@ code changes.
   audio encoder **and** to an embedding of the generated note track, so lights follow
   the notes and the music. It trains only on the lightshows of the gold subset.
 - Training: AdamW, cosine schedule, label smoothing, and per-difficulty and per-mode
-  sampling weights. The density token is computed from ground truth during training and
+  sampling weights. Rare modes are oversampled; Easy is not, since it is low priority (§1). The density token is computed from ground truth during training and
   set by the user or a heuristic at inference. Logging goes to TensorBoard. Configs live
   in `configs/*.yaml`.
 - Experiments to run: token time-resolution ablation, context length, pretrained encoder
