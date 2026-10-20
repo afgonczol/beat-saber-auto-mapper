@@ -1,0 +1,47 @@
+{
+  "version": "4.0.0",
+  "basicEvents": [
+    {"b": 0, "i": 0},
+    {"b": 2, "i": 1},
+    {"b": 4, "i": 1},
+    {"b": 6, "i": 2, "customData": {"color": [1, 0, 0, 1]}}
+  ],
+  "basicEventsData": [
+    {"t": 0, "i": 1, "f": 1},
+    {"t": 1, "i": 6, "f": 0.8},
+    {"t": 4, "i": 3, "f": 1}
+  ],
+  "colorBoostEvents": [{"b": 8, "i": 0}, {"b": 12, "i": 1}],
+  "colorBoostEventsData": [{"b": 1}, {"b": 0}],
+  "waypoints": [],
+  "waypointsData": [],
+  "basicEventTypesWithKeywords": {"d": []},
+  "eventBoxGroups": [
+    {
+      "b": 2,
+      "g": 0,
+      "t": 1,
+      "e": [{"f": 0, "e": 0, "l": [{"b": 0, "i": 0}, {"b": 1, "i": 1}, {"b": 2, "i": 2}]}]
+    },
+    {"b": 2, "g": 1, "t": 2, "e": [{"f": 1, "e": 0, "l": [{"b": 0, "i": 0}]}]},
+    {"b": 4, "g": 2, "t": 3, "e": [{"f": 0, "e": 0, "l": [{"b": 0, "i": 0}]}]},
+    {"b": 4, "g": 3, "t": 4, "e": [{"f": 0, "e": 0, "l": [{"b": 0, "i": 0}, {"b": 1, "i": 1}]}]}
+  ],
+  "indexFilters": [
+    {"c": 0, "f": 1, "p": 1, "t": 0, "r": 0, "n": 0, "s": 0, "l": 0, "d": 0},
+    {"c": 2, "f": 2, "p": 0, "t": 1, "r": 1, "n": 1, "s": 7, "l": 0.5, "d": 2}
+  ],
+  "lightColorEventBoxes": [{"w": 1, "d": 1, "s": 1, "t": 1, "b": 1, "e": 0}],
+  "lightColorEvents": [
+    {"p": 0, "e": -1, "c": 0, "b": 1, "f": 0, "sb": 0, "sf": 0},
+    {"p": 0, "e": 0, "c": 1, "b": 0.5, "f": 2, "sb": 0.25, "sf": 1},
+    {"p": 1, "e": -1, "c": 2, "b": 1, "f": 0, "sb": 0, "sf": 0}
+  ],
+  "lightRotationEventBoxes": [{"w": 2, "d": 2, "s": 20, "t": 2, "b": 0, "e": 1, "a": 1, "f": 1}],
+  "lightRotationEvents": [{"p": 0, "e": 1, "r": 45, "d": 2, "l": 1}],
+  "lightTranslationEventBoxes": [{"w": 1, "d": 1, "s": 0.5, "t": 1, "b": 1, "e": 0, "a": 0, "f": 0}],
+  "lightTranslationEvents": [{"p": 0, "e": 2, "t": 3}],
+  "fxEventBoxes": [{"w": 1, "d": 1, "s": 0, "t": 1, "b": 1, "e": 0}],
+  "floatFxEvents": [{"p": 0, "e": 0, "v": 0}, {"p": 0, "e": 1, "v": 50}],
+  "useNormalEventsAsCompatibleEvents": true
+}

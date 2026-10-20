@@ -1,0 +1,27 @@
+﻿{
+  "_version": "2.0.0",
+  "_songName": "Fixture Modded",
+  "_songAuthorName": "Nobody",
+  "_levelAuthorName": "hand-written",
+  "_beatsPerMinute": 100,
+  "_songFilename": "song.egg",
+  "_coverImageFilename": "",
+  "_environmentName": "DefaultEnvironment",
+  "_difficultyBeatmapSets": [
+    {
+      "_beatmapCharacteristicName": "Standard",
+      "_difficultyBeatmaps": [
+        {
+          "_difficulty": "Expert",
+          "_beatmapFilename": "Expert.dat",
+          "_noteJumpMovementSpeed": 16,
+          "_customData": {"_requirements": ["Mapping Extensions"], "_suggestions": ["Chroma"]}
+        },
+        {
+          "_difficulty": "Hard",
+          "_beatmapFilename": "Missing.dat"
+        }
+      ]
+    }
+  ]
+}

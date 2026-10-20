@@ -1,0 +1,42 @@
+{
+  "version": "4.0.1",
+  "song": {"title": "Fixture Four", "subTitle": "v4 test map", "author": "Nobody"},
+  "audio": {
+    "songFilename": "song.egg",
+    "songDuration": 20.8,
+    "audioDataFilename": "BPMInfo.dat",
+    "bpm": 120,
+    "lufs": 0,
+    "previewStartTime": 5,
+    "previewDuration": 8
+  },
+  "songPreviewFilename": "song.egg",
+  "coverImageFilename": "cover.png",
+  "environmentNames": ["TheSecondEnvironment", "GlassDesertEnvironment"],
+  "colorSchemes": [],
+  "difficultyBeatmaps": [
+    {
+      "characteristic": "Standard",
+      "difficulty": "ExpertPlus",
+      "beatmapAuthors": {"mappers": ["hand-written"], "lighters": ["hand-written"]},
+      "environmentNameIdx": 0,
+      "beatmapColorSchemeIdx": -1,
+      "noteJumpMovementSpeed": 18,
+      "noteJumpStartBeatOffset": 0.5,
+      "beatmapDataFilename": "ExpertPlus.dat",
+      "lightshowDataFilename": "Lightshow.dat",
+      "customData": {"difficultyLabel": "Fixture Plus"}
+    },
+    {
+      "characteristic": "360Degree",
+      "difficulty": "Expert",
+      "beatmapAuthors": {"mappers": ["hand-written"], "lighters": ["hand-written"]},
+      "environmentNameIdx": 1,
+      "beatmapColorSchemeIdx": -1,
+      "noteJumpMovementSpeed": 16,
+      "noteJumpStartBeatOffset": 0,
+      "beatmapDataFilename": "Expert360.dat",
+      "lightshowDataFilename": "Lightshow.dat"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "_version": "2.1.0",
+  "_songName": "Fixture Three",
+  "_songSubName": "",
+  "_songAuthorName": "Nobody",
+  "_levelAuthorName": "hand-written",
+  "_beatsPerMinute": 128,
+  "_songTimeOffset": 0,
+  "_shuffle": 0,
+  "_shufflePeriod": 0.5,
+  "_previewStartTime": 30,
+  "_previewDuration": 12,
+  "_songFilename": "song.egg",
+  "_coverImageFilename": "cover.jpg",
+  "_environmentName": "WeaveEnvironment",
+  "_allDirectionsEnvironmentName": "GlassDesertEnvironment",
+  "_environmentNames": ["WeaveEnvironment", "GlassDesertEnvironment"],
+  "_colorSchemes": [],
+  "_difficultyBeatmapSets": [
+    {
+      "_beatmapCharacteristicName": "Standard",
+      "_difficultyBeatmaps": [
+        {
+          "_difficulty": "Expert",
+          "_difficultyRank": 7,
+          "_beatmapFilename": "Expert.dat",
+          "_noteJumpMovementSpeed": 17,
+          "_noteJumpStartBeatOffset": 0,
+          "_environmentNameIdx": 0
+        },
+        {
+          "_difficulty": "ExpertPlus",
+          "_difficultyRank": 9,
+          "_beatmapFilename": "ExpertPlus.dat",
+          "_noteJumpMovementSpeed": 19,
+          "_noteJumpStartBeatOffset": 0.5,
+          "_environmentNameIdx": 0
+        }
+      ]
+    },
+    {
+      "_beatmapCharacteristicName": "90Degree",
+      "_difficultyBeatmaps": [
+        {
+          "_difficulty": "Normal",
+          "_difficultyRank": 3,
+          "_beatmapFilename": "Normal90Degree.dat",
+          "_noteJumpMovementSpeed": 10,
+          "_noteJumpStartBeatOffset": 0,
+          "_environmentNameIdx": 1
+        }
+      ]
+    },
+    {
+      "_beatmapCharacteristicName": "Legacy",
+      "_difficultyBeatmaps": [
+        {
+          "_difficulty": "Easy",
+          "_difficultyRank": 1,
+          "_beatmapFilename": "Ignored.dat",
+          "_noteJumpMovementSpeed": 10,
+          "_noteJumpStartBeatOffset": 0
+        }
+      ]
+    }
+  ]
+}
