@@ -100,6 +100,7 @@ If the filters change, the cursor restarts at page 0, and maps already downloade
 | Date | Maps | Gold | Size | Notes |
 |---|---|---|---|---|
 | 2026-10-19 | 500 | 392 | 3.4 GB | First acceptance run with the default filters, hard-killed twice and resumed. Rejected: 65 maps for mods. Lowest rating 0.968, fewest votes 156. |
+| 2026-10-20 | 2000 | 1405 | 13.4 GB | **Dataset v0.** Resumed from the 500 above with `--limit 2000 --max-gb 15`. 1500 new maps in 15 min, 0 failed. Rejected: 173 maps for mods. Lowest rating 0.955, fewest votes 91. |
 
 Note for the dataset builder (WS3b): the top of the rating list is mostly BeatSaver-curated
 maps (391 of 500), so at this size `beatsaver_curated` alone tags most maps as gold. Ranked
@@ -113,3 +114,59 @@ BeatLeader ratings for the same 500 maps (backfilled with `bsmapper data ratings
   `Lightshow`, 2 `NoArrows` and 8 `Standard` difficulties.
 - Status: 1602 unranked, 91 ranked, 15 unrankable.
 - Standard `tech_rating` quartiles: 1.80 / 2.84 / 4.15, ranging from 0 to 10.7.
+
+#### Dataset v0 (2026-10-20, 2000 maps)
+
+Command (main checkout, BeatLeader ratings on):
+`bsmapper data scrape --out data/raw --limit 2000 --max-gb 15`
+
+- **Disk:** 13.38 GB of zips (2000 files) plus 8.8 MB of cache. 318 GB of the G: drive was
+  still free afterwards.
+- **Gold:** 1405 maps, mostly picked by BeatSaver curators.
+
+  | Gold reason | Maps |
+  |---|---|
+  | `beatsaver_curated` | 1394 |
+  | `beatleader_ranked` | 79 |
+  | `scoresaber_ranked` | 54 |
+  | ranked on either leaderboard | 106 |
+
+- **Upload year:**
+
+  | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+  |---|---|---|---|---|---|
+  | 520 | 617 | 501 | 256 | 89 | 17 |
+
+- **Difficulties:** 5933 in total. 1995 maps have at least one Standard difficulty.
+
+  | Characteristic | Difficulties |
+  |---|---|
+  | Standard | 5589 |
+  | Lightshow | 123 |
+  | Lawless | 102 |
+  | OneSaber | 74 |
+  | 360Degree | 25 |
+  | NoArrows | 12 |
+  | Legacy | 8 |
+  | 90Degree | 0 |
+
+  | Difficulty | All characteristics | Standard only |
+  |---|---|---|
+  | Easy | 490 | 440 |
+  | Normal | 585 | 561 |
+  | Hard | 1263 | 1238 |
+  | Expert | 1648 | 1585 |
+  | ExpertPlus | 1947 | 1765 |
+
+- **BeatLeader ratings:**
+  - All 2000 maps were looked up and found.
+  - 5840 of the 5933 difficulties have a `tech_rating`. The 93 without one are 72
+    Lightshow, 16 Standard, 4 NoArrows and 1 Lawless.
+  - Status: 5651 unranked (AI-rated), 252 ranked, 30 unrankable.
+  - Standard `tech_rating` quartiles: 1.86 / 2.95 / 4.21, ranging from 0 to 10.7. That is
+    5573 rated Standard difficulties.
+
+The rare modes are thin. There are 74 OneSaber and 25 360Degree difficulties, and no
+90Degree at all, so PLAN's mode fine-tuning (WS6) will need a targeted scrape, for
+example BeatSaver's `characteristics` search filter. The top-rated slice also leans heavily
+toward Expert and ExpertPlus, with only 440 Standard Easy difficulties.
