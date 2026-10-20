@@ -54,6 +54,7 @@ class GenerationRequest:
     characteristic: Characteristic
     difficulty: Difficulty
     target_nps: float | None = None  # None = model/heuristic picks
+    style: float | None = None  # 0 = flowy .. 1 = technical; None = no preference
     njs: float | None = None
     seed: int = 0
     temperature: float = 1.0

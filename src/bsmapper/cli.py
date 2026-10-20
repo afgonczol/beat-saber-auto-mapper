@@ -17,6 +17,8 @@ def generate(
     modes: str = "Standard",
     lighting: str = "v3",
     zip_output: bool = typer.Option(True, "--zip/--no-zip"),
+    style: float | None = typer.Option(None, min=0.0, max=1.0, help="0 = flowy, 1 = technical."),
+    install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
     seed: int = 0,
 ) -> None:
     """Generate a full map folder from an audio file (WS7)."""
