@@ -2,11 +2,14 @@
 
 The manifest is append-only and is written only after a zip is safely in place, so it is
 the source of truth for what has been downloaded. A torn last line (from a crash mid-write)
-is ignored on load. `state.json` holds the search cursor and per-map rejection reasons.
+is ignored on load. `state/<query key>.json` holds one search query's cursor and per-map
+rejection reasons, so several queries (say the main one and a characteristic-targeted one)
+can share an output directory without resetting each other.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -17,7 +20,8 @@ from typing import Any
 from bsmapper.data.filters import MapRecord
 
 MANIFEST_NAME = "manifest.jsonl"
-STATE_NAME = "state.json"
+STATE_DIR = "state"
+LEGACY_STATE_NAME = "state.json"  # single cursor, from before per-query states
 ZIP_DIR = "zips"
 
 
@@ -94,8 +98,20 @@ def append_manifest(out_dir: Path, entry: ManifestEntry) -> None:
         os.fsync(f.fileno())
 
 
+def query_key(query: dict[str, Any]) -> str:
+    """A short stable name for a search query (its params, order-independent)."""
+    blob = json.dumps(query, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def state_path(out_dir: Path, query: dict[str, Any]) -> Path:
+    return out_dir / STATE_DIR / f"{query_key(query)}.json"
+
+
 @dataclass(slots=True)
 class ScrapeState:
+    """The cursor of one search query. Each distinct query has its own file."""
+
     query: dict[str, Any] = field(default_factory=dict)
     next_page: int = 0
     exhausted: bool = False
@@ -103,14 +119,26 @@ class ScrapeState:
     updated_at: str = ""
 
     @classmethod
-    def load(cls, out_dir: Path) -> ScrapeState:
-        path = out_dir / STATE_NAME
-        if not path.exists():
-            return cls()
+    def load(cls, out_dir: Path, query: dict[str, Any]) -> ScrapeState:
+        """The saved state for `query`, or a fresh one at page 0."""
+        path = state_path(out_dir, query)
+        legacy = out_dir / LEGACY_STATE_NAME
+        if not path.exists() and legacy.exists():
+            old = cls._read(legacy)
+            if old is not None and old.query == query:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                legacy.replace(path)  # adopt the old single cursor for its own query
+        state = cls._read(path) if path.exists() else None
+        if state is None or state.query != query:
+            return cls(query=query)
+        return state
+
+    @classmethod
+    def _read(cls, path: Path) -> ScrapeState | None:
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return cls()
+            return None
         return cls(
             query=d.get("query", {}),
             next_page=int(d.get("next_page", 0)),
@@ -121,7 +149,8 @@ class ScrapeState:
 
     def save(self, out_dir: Path) -> None:
         self.updated_at = now_iso()
-        path = out_dir / STATE_NAME
+        path = state_path(out_dir, self.query)
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
         payload = {
             "query": self.query,

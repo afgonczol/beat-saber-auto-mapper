@@ -42,3 +42,14 @@ def test_live_beatleader_ratings():
     ep = by[("Standard", "ExpertPlus")]
     assert ep.status == "ranked"
     assert ep.tech_rating and ep.pass_rating and ep.acc_rating and ep.stars
+
+
+def test_live_characteristics_filter_is_an_or_list():
+    cfg = FilterConfig(min_score=0.7, min_votes=10, characteristics=("OneSaber", "90Degree"))
+    with BeatSaverClient(requests_per_second=1.0) as client:
+        data = client.search(0, cfg.search_params())
+    recs = [r for r in map(MapRecord.from_api, data["docs"]) if r is not None]
+    assert len(recs) >= 50
+    assert all(cfg.wants(r) for r in recs)
+    chars = {d.characteristic for r in recs for d in r.diffs}
+    assert {"OneSaber", "90Degree"} <= chars
