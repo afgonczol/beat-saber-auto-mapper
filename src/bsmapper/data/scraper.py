@@ -3,9 +3,11 @@
 Output layout (under `out_dir`, default `data/raw/`):
 
     zips/<key>.zip      the map as served by BeatSaver
-    manifest.jsonl      one line per downloaded map (metadata, gold tag, zip path, size)
+    manifest.jsonl      one line per downloaded map (metadata, gold tag, BeatLeader ratings,
+                        zip path, size)
     state.json          search cursor + rejection reasons, so a rerun picks up where it stopped
     cache/search/       cached search pages (see BeatSaverClient)
+    cache/beatleader/   cached BeatLeader ratings by map hash (see BeatLeaderClient)
 
 Rerunning with the same filters continues from the saved page and skips maps already in the
 manifest. Changing the filters restarts the cursor but still keeps every downloaded map.
@@ -17,11 +19,13 @@ import logging
 import shutil
 import zipfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from bsmapper.data.beatleader import BeatLeaderClient, attach_ratings
 from bsmapper.data.beatsaver import BeatSaverClient, BeatSaverError
 from bsmapper.data.filters import FilterConfig, MapRecord, check, gold_reasons
+from bsmapper.data.http import HttpError
 from bsmapper.data.manifest import (
     ZIP_DIR,
     ManifestEntry,
@@ -29,6 +33,7 @@ from bsmapper.data.manifest import (
     append_manifest,
     now_iso,
     read_manifest,
+    write_manifest,
 )
 
 log = logging.getLogger(__name__)
@@ -68,9 +73,71 @@ def load_curated_keys(path: Path) -> frozenset[str]:
     return frozenset(keys)
 
 
-def scrape(client: BeatSaverClient, cfg: ScrapeConfig) -> ScrapeResult:
+@dataclass(slots=True)
+class RatingsCoverage:
+    maps: int = 0
+    maps_with_ratings: int = 0
+    diffs: int = 0
+    diffs_with_tech: int = 0
+    not_looked_up: int = 0
+
+
+def ratings_coverage(entries: list[ManifestEntry]) -> RatingsCoverage:
+    cov = RatingsCoverage(maps=len(entries))
+    for e in entries:
+        cov.not_looked_up += e.beatleader_at is None
+        rated = [d for d in e.record.diffs if d.beatleader and d.beatleader.tech_rating is not None]
+        cov.maps_with_ratings += bool(rated)
+        cov.diffs += len(e.record.diffs)
+        cov.diffs_with_tech += len(rated)
+    return cov
+
+
+def fetch_ratings(bl: BeatLeaderClient, entry: ManifestEntry) -> ManifestEntry:
+    """Attach BeatLeader ratings. On a network/API failure, return the entry unchanged
+    (still `beatleader_at=None`) so a later run retries; never fail the map."""
+    try:
+        ratings = bl.ratings(entry.record.hash)
+    except HttpError as e:
+        log.warning("BeatLeader lookup failed for %s: %s", entry.record.key, e)
+        return entry
+    return replace(entry, record=attach_ratings(entry.record, ratings), beatleader_at=now_iso())
+
+
+def backfill_ratings(bl: BeatLeaderClient, out_dir: Path, refresh: bool = False) -> int:
+    """Look up ratings for manifest entries that have none yet (all of them if `refresh`).
+
+    Updates are appended as they arrive (crash-safe, last line wins), then the manifest is
+    compacted. Returns how many entries were updated.
+    """
+    todo = [e for e in read_manifest(out_dir) if refresh or e.beatleader_at is None]
+    updated = 0
+    try:
+        for i, entry in enumerate(todo, 1):
+            new = fetch_ratings(bl, entry)
+            if new.beatleader_at is None:
+                continue
+            append_manifest(out_dir, new)
+            updated += 1
+            if i % 50 == 0:
+                log.info("BeatLeader ratings: %d/%d", i, len(todo))
+    finally:
+        if updated:
+            write_manifest(out_dir, read_manifest(out_dir))
+    return updated
+
+
+def scrape(
+    client: BeatSaverClient, cfg: ScrapeConfig, ratings: BeatLeaderClient | None = None
+) -> ScrapeResult:
+    """Run (or resume) a scrape. With `ratings`, also attach BeatLeader ratings, first to
+    already-downloaded maps that lack them and then to each new map."""
     out = cfg.out_dir
     out.mkdir(parents=True, exist_ok=True)
+    if ratings is not None:
+        n = backfill_ratings(ratings, out)
+        if n:
+            log.info("Added BeatLeader ratings to %d existing maps.", n)
     entries = read_manifest(out)
     done = {e.record.key for e in entries}
     total_bytes = sum(e.bytes for e in entries)
@@ -126,6 +193,8 @@ def scrape(client: BeatSaverClient, cfg: ScrapeConfig) -> ScrapeResult:
                 entry = _download(client, out, rec, cfg.curated_keys, result)
                 if entry is None:
                     continue
+                if ratings is not None:
+                    entry = fetch_ratings(ratings, entry)
                 append_manifest(out, entry)
                 done.add(rec.key)
                 result.downloaded += 1

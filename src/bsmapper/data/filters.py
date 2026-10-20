@@ -12,6 +12,23 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class BeatLeaderRating:
+    """BeatLeader's ratings for one (characteristic, difficulty). Any value may be missing."""
+
+    characteristic: str
+    difficulty: str
+    status: str | None = None  # unranked / nominated / qualified / ranked / ...
+    stars: float | None = None
+    tech_rating: float | None = None
+    pass_rating: float | None = None
+    acc_rating: float | None = None
+    predicted_acc: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class DiffInfo:
     characteristic: str
     difficulty: str
@@ -32,6 +49,13 @@ class DiffInfo:
     parity_errors: int = 0
     parity_warns: int = 0
     parity_resets: int = 0
+    beatleader: BeatLeaderRating | None = None  # None: BeatLeader has no rating for it
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DiffInfo:
+        d = dict(d)
+        bl = d.pop("beatleader", None)
+        return cls(**d, beatleader=BeatLeaderRating(**bl) if bl else None)
 
     @classmethod
     def from_api(cls, d: dict[str, Any]) -> DiffInfo:
@@ -134,7 +158,7 @@ class MapRecord:
     def from_dict(cls, d: dict[str, Any]) -> MapRecord:
         d = dict(d)
         d["tags"] = tuple(d.get("tags") or ())
-        d["diffs"] = tuple(DiffInfo(**x) for x in d.get("diffs") or ())
+        d["diffs"] = tuple(DiffInfo.from_dict(x) for x in d.get("diffs") or ())
         return cls(**d)
 
 

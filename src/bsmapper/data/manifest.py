@@ -29,6 +29,7 @@ class ManifestEntry:
     gold: bool
     gold_reasons: list[str]
     downloaded_at: str
+    beatleader_at: str | None = None  # when BeatLeader was asked; None = not yet
 
     def to_json(self) -> str:
         d = self.record.to_dict()
@@ -38,6 +39,7 @@ class ManifestEntry:
             gold=self.gold,
             gold_reasons=self.gold_reasons,
             downloaded_at=self.downloaded_at,
+            beatleader_at=self.beatleader_at,
         )
         return json.dumps(d, ensure_ascii=False)
 
@@ -47,6 +49,7 @@ class ManifestEntry:
         extra = {
             k: d.pop(k) for k in ("zip_path", "bytes", "gold", "gold_reasons", "downloaded_at")
         }
+        extra["beatleader_at"] = d.pop("beatleader_at", None)
         return cls(record=MapRecord.from_dict(d), **extra)
 
 
@@ -66,6 +69,18 @@ def read_manifest(out_dir: Path) -> list[ManifestEntry]:
                 continue  # torn or foreign line
             entries[e.record.key] = e  # last write wins
     return list(entries.values())
+
+
+def write_manifest(out_dir: Path, entries: list[ManifestEntry]) -> None:
+    """Atomically replace the manifest (used to compact it after in-place updates)."""
+    path = out_dir / MANIFEST_NAME
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(e.to_json() + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(path)
 
 
 def append_manifest(out_dir: Path, entry: ManifestEntry) -> None:

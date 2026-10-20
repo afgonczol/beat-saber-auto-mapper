@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from bsmapper.data.beatleader import BeatLeaderClient
 from bsmapper.data.beatsaver import BeatSaverClient
 
 
@@ -97,9 +98,21 @@ class FakeBeatSaver:
         self.on_download: Callable[[str], None] | None = None
         self.last_params: dict[str, str] = {}
         self.user_agents: set[str] = set()
+        # BeatLeader: hash -> difficulties. Hashes not listed 404; `bl_down` makes it 500.
+        self.bl_maps: dict[str, list[dict[str, Any]]] = {}
+        self.bl_calls: list[str] = []
+        self.bl_down = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.user_agents.add(request.headers.get("user-agent", ""))
+        if request.url.host == "api.beatleader.com":
+            h = request.url.path.rsplit("/", 1)[1]
+            self.bl_calls.append(h)
+            if self.bl_down:
+                return httpx.Response(500)
+            if h not in self.bl_maps:
+                return httpx.Response(404, json={"title": "Not Found"})
+            return httpx.Response(200, json={"hash": h, "difficulties": self.bl_maps[h]})
         if request.url.host == "api.beatsaver.com":
             page = int(request.url.path.rsplit("/", 1)[1])
             self.search_calls.append(page)
@@ -123,6 +136,30 @@ class FakeBeatSaver:
             cache_dir=cache_dir, transport=httpx.MockTransport(self.handler), **kw
         )
 
+    def bl_client(self, cache_dir=None, **kw: Any) -> BeatLeaderClient:
+        kw.setdefault("sleep", lambda s: None)
+        kw.setdefault("requests_per_second", 1000.0)
+        kw.setdefault("max_retries", 1)
+        return BeatLeaderClient(
+            cache_dir=cache_dir, transport=httpx.MockTransport(self.handler), **kw
+        )
+
+
+def bl_diff(mode: str = "Standard", diff: str = "Expert", **over: Any) -> dict[str, Any]:
+    """One entry of BeatLeader's `difficulties` list."""
+    d = {
+        "modeName": mode,
+        "difficultyName": diff,
+        "status": 3,
+        "stars": 5.1,
+        "passRating": 2.7,
+        "accRating": 7.1,
+        "techRating": 3.6,
+        "predictedAcc": 0.98,
+    }
+    d.update(over)
+    return d
+
 
 @pytest.fixture
 def fake() -> Callable[..., FakeBeatSaver]:
@@ -132,3 +169,8 @@ def fake() -> Callable[..., FakeBeatSaver]:
 @pytest.fixture
 def doc() -> Callable[..., dict[str, Any]]:
     return make_doc
+
+
+@pytest.fixture
+def bl() -> Callable[..., dict[str, Any]]:
+    return bl_diff

@@ -36,6 +36,28 @@ A map is tagged `gold` when any of these is true (`gold_reasons` in the manifest
 curator), or `curated_list` (its key is in the file passed with `--gold-list`, one key per
 line, `#` for comments).
 
+### BeatLeader ratings (for the flowy ↔ technical style labels)
+
+For each map, the scraper looks up `api.beatleader.com/map/hash/{hash}`. It attaches
+BeatLeader's ratings to every matching (characteristic, difficulty) as
+`diffs[i].beatleader`. The fields are `status` (`ranked`, `unranked`, `unrankable`, …),
+`stars`, `tech_rating`, `pass_rating`, `acc_rating` and `predicted_acc`. BeatLeader's AI
+model rates most maps, including unranked ones, so coverage is high.
+
+- If a map or difficulty is unknown to BeatLeader, `beatleader` is `null`. Single values
+  can also be `null`.
+- `beatleader_at` on the manifest line records when the lookup ran. `null` means it has
+  not run yet, for example because BeatLeader was unreachable. The next `scrape` or
+  `bsmapper data ratings` run retries those maps. A BeatLeader failure never stops the
+  download.
+- `bsmapper data ratings --out data/raw` backfills an existing manifest.
+  `--refresh` fetches the ratings again for every map.
+- `--no-ratings` on `scrape` skips the lookups entirely.
+- Parsed ratings are cached for 7 days in `cache/beatleader/` (about 3 KB per map).
+
+The heuristic tech score is **not** computed here. The dataset builder (WS3b) computes it
+and calibrates it against `tech_rating`.
+
 ### Budget
 
 `--max-gb` (default 50) stops the run once the zips reach that size. `--min-free-gb`
@@ -56,13 +78,14 @@ data/raw/
   manifest.jsonl    one JSON object per downloaded map (see below)
   state.json        search cursor + rejection reason per rejected map key
   cache/search/     cached search pages
+  cache/beatleader/ cached BeatLeader ratings by map hash
 ```
 
 Each manifest line is a `MapRecord` (`bsmapper.data.filters`): key, version hash, song and
 mapper names, bpm, duration, upload date, score, votes, AI flags, ranked/curated flags,
 tags, and a per-difficulty summary (notes, nps, njs, offset, environment, Chroma/NE/ME
-flags, BeatSaver parity summary). It also holds `zip_path`, `bytes`, `gold`,
-`gold_reasons` and `downloaded_at`. Read it with `bsmapper.data.read_manifest`.
+flags, BeatSaver parity summary and BeatLeader ratings). It also holds `zip_path`, `bytes`,
+`gold`, `gold_reasons`, `downloaded_at` and `beatleader_at`. Read it with `bsmapper.data.read_manifest`.
 
 ### Resume and crash safety
 
@@ -83,3 +106,10 @@ maps (391 of 500), so at this size `beatsaver_curated` alone tags most maps as g
 maps (38) are a much smaller, stricter set, and the builder may want to weight them on
 their own. The difficulties include `Lightshow` and `Lawless` characteristics, which the
 builder should drop.
+
+BeatLeader ratings for the same 500 maps (backfilled with `bsmapper data ratings`):
+- All 500 maps were found.
+- 1683 of the 1708 difficulties have a `tech_rating`. The ones without are 15
+  `Lightshow`, 2 `NoArrows` and 8 `Standard` difficulties.
+- Status: 1602 unranked, 91 ranked, 15 unrankable.
+- Standard `tech_rating` quartiles: 1.80 / 2.84 / 4.15, ranging from 0 to 10.7.
