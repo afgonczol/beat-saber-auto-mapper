@@ -11,7 +11,7 @@ dist/
 .mypy_cache/
 
 # Data, weights and outputs: never commit
-data/
+/data/
 checkpoints/
 runs/
 out/
