@@ -6,8 +6,8 @@ writes them back as v3 (default), v2 or v4.
 ```python
 from bsmapper.formats import read_map_report, write_map, package_map
 
-beatmap, report = read_map_report("downloads/1a2b3.zip")   # folder or zip
-if report.needs_mods:            # Noodle / Mapping Extensions: skip for training
+beatmap, report = read_map_report("downloads/1a2b3.zip")  # folder or zip
+if report.needs_mods:  # Noodle / Mapping Extensions: skip for training
     ...
 write_map(beatmap, "out/Song", version="v3")
 package_map(beatmap, Path("song.mp3"), Path("out/Song"), zip_path=Path("out/Song.zip"))
