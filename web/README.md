@@ -14,9 +14,11 @@ bsmapper serve                           # http://127.0.0.1:8765, API docs at /d
 `bsmapper serve` serves `web/dist` at `/` and the jobs API under `/api`. For UI work, run
 `bsmapper serve` and `npm run dev` side by side: Vite (port 5173) proxies `/api` to 8765.
 
-Until the real pipeline lands (issue #13) the server uses `MockJobRunner`: a canned 16-beat
-v3 map (`src/bsmapper/server/mock_map/`) tiled over the song, with fake warnings.
-`--mock-delay` sets the seconds per pipeline step.
+The server runs the real WS7 pipeline (`PipelineJobRunner`; notes come from the stub
+generator until the WS6 model lands). For UI work without audio analysis, `bsmapper serve
+--mock` uses `MockJobRunner` instead: a canned 16-beat v3 map
+(`src/bsmapper/server/mock_map/`) tiled over the song, with fake warnings. `--mock-delay`
+sets its seconds per pipeline step.
 
 ## API contract
 
@@ -33,7 +35,7 @@ npm run gen:api                      # rewrite src/api/schema.d.ts from it
 | `GET /api/jobs/{id}` | status, stage, progress, `last_seq` |
 | `GET /api/jobs/{id}/events?after=` | SSE progress; ends after a `done`/`failed` status event |
 | `GET /api/jobs/{id}/map` | preview JSON: the `schema.Beatmap` (times in beats) + warnings |
-| `GET /api/jobs/{id}/audio` | the uploaded song, for playback |
+| `GET /api/jobs/{id}/audio` | the song for playback: the packaged `song.egg` (aligned with the map's beats) once the map is ready, else the upload |
 | `GET /api/jobs/{id}/download` | the game-ready zip |
 | `POST /api/jobs/{id}/regenerate` | one difficulty with a new seed/temperature; follow it on `/events` |
 

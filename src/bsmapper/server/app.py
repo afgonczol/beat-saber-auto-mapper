@@ -54,11 +54,11 @@ def create_app(
     work_dir: Path | None = None,
     web_dist: Path | None = None,
 ) -> FastAPI:
-    """Build the app. Defaults: the mock runner, ``out/server`` and the repo's ``web/dist``."""
+    """Build the app. Defaults: the real pipeline, ``out/server`` and the repo's ``web/dist``."""
     if runner is None:
-        from bsmapper.server.mock import MockJobRunner
+        from bsmapper.server.pipeline_runner import PipelineJobRunner
 
-        runner = MockJobRunner()
+        runner = PipelineJobRunner()
     manager = JobManager(runner, work_dir or DEFAULT_WORK_DIR)
     if web_dist is None:
         env = os.environ.get("BSMAPPER_WEB_DIST")
@@ -202,11 +202,15 @@ def _api(manager: JobManager) -> APIRouter:
     @router.get(
         "/jobs/{job_id}/audio",
         response_class=FileResponse,
-        responses={**NOT_FOUND, 200: {"content": {"audio/*": {}}, "description": "The upload."}},
+        responses={**NOT_FOUND, 200: {"content": {"audio/*": {}}, "description": "The song."}},
     )
     def job_audio(job_id: str) -> FileResponse:
-        """The uploaded song, for playback in the preview (supports range requests)."""
-        path = get_job(job_id).input.audio_path
+        """The song for the preview, aligned with the map (supports range requests)."""
+        # The packaged song.egg once the map is ready (it may be padded), else the upload.
+        job = get_job(job_id)
+        path = job.input.audio_path
+        if job.result is not None and job.result.audio_path and job.result.audio_path.is_file():
+            path = job.result.audio_path
         media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if path.suffix == ".egg":
             media = "audio/ogg"

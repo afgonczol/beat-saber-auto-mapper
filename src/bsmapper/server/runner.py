@@ -1,7 +1,7 @@
 """The boundary between the server and whatever produces maps.
 
-The server only talks to a ``JobRunner``. Today that is ``MockJobRunner`` (a canned map);
-the real WS7 pipeline (issue #13) replaces it by implementing the same two methods.
+The server only talks to a ``JobRunner``: ``PipelineJobRunner`` (the real WS7 pipeline,
+``pipeline_runner``) or ``MockJobRunner`` (a canned map, for UI development).
 Runners are called from the single worker thread, one job at a time, and may block.
 """
 
@@ -34,6 +34,9 @@ class JobResult:
     zip_path: Path  # the downloadable, game-ready map zip
     warnings: list[DifficultyWarning] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # What the preview plays. None: the upload. Runners that pad the song (lead-in) set
+    # this to the packaged song.egg so the audio lines up with the map's beats.
+    audio_path: Path | None = None
 
 
 class JobRunner(Protocol):
