@@ -98,3 +98,17 @@ def test_rotations(generator, analysis, mode) -> None:
         assert peak <= 45
     issues = RuleChecker().check(dmap, tempo_beatmap(analysis))
     assert [i for i in issues if i.severity == "error"] == []
+
+
+def test_lean_phrases_and_side_walls(generator, analysis) -> None:
+    dmap = gen(generator, analysis, diff=Difficulty.EXPERT_PLUS)
+    outer = sum(n.x in (0, 3) for n in dmap.notes) / len(dmap.notes)
+    assert outer > 0.25  # not just the two centre lanes
+    assert dmap.obstacles
+    for wall in dmap.obstacles:
+        assert wall.width == 2 and wall.x in (0, 2) and wall.duration >= 1.0
+        # the wall covers a centre column, so the player has to lean around it
+        assert wall.x <= 1 < wall.x + wall.width or wall.x <= 2 < wall.x + wall.width
+    assert not gen(generator, analysis, diff=Difficulty.EASY).obstacles
+    no_walls = gen(generator, analysis, diff=Difficulty.EXPERT_PLUS, allow_obstacles=False)
+    assert not no_walls.obstacles

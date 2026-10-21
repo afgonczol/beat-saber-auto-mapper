@@ -13,7 +13,10 @@ What it does:
    naive parity. Every placed object is checked against the ``bsmapper.rules`` state
    (``MapState.candidates_mask``), so anything that would break a hard rule is never
    placed; the first allowed candidate by weight wins.
-4. For 90/360 it inserts rotation events every few bars (90 sways within ±45°).
+4. Lean phrases: every few bars both hands may drift one column left or right, onto the
+   outer lanes, and on Normal and up a full-height side wall often closes the other side,
+   so the player has to lean (most maps make you move; centred notes never do).
+5. For 90/360 it inserts rotation events every few bars (90 sways within ±45°).
 
 ``style`` (0 flowy .. 1 technical) shifts weight from straight down/up cuts on the beat
 towards diagonals, top-row and off-beat notes. ``seed`` and ``temperature`` vary choices.
@@ -37,6 +40,7 @@ from bsmapper.schema import (
     Difficulty,
     DifficultyMap,
     Note,
+    Obstacle,
     RotationEvent,
 )
 
@@ -55,14 +59,17 @@ class StubProfile:
     per_beat: float  # ... but at most this many notes per beat (slow songs stay calm)
     double_share: float  # chance that an eligible downbeat is hit with both hands
     rotation_bars: int  # bars between rotation events (90/360)
+    phrase_bars: int = 2  # bars per lean phrase
+    lean_share: float = 0.5  # chance that a phrase leans left or right
+    wall_share: float = 0.5  # chance that a leaning phrase gets a side wall
 
 
 PROFILES: dict[Difficulty, StubProfile] = {
-    Difficulty.EASY: StubProfile(1, 1.0, 0.5, 0.0, 4),
-    Difficulty.NORMAL: StubProfile(1, 1.7, 0.9, 0.0, 4),
-    Difficulty.HARD: StubProfile(2, 2.6, 1.25, 0.05, 2),
-    Difficulty.EXPERT: StubProfile(2, 3.6, 1.75, 0.1, 2),
-    Difficulty.EXPERT_PLUS: StubProfile(4, 4.8, 2.5, 0.15, 1),
+    Difficulty.EASY: StubProfile(1, 1.0, 0.5, 0.0, 4, 4, 0.25, 0.0),
+    Difficulty.NORMAL: StubProfile(1, 1.7, 0.9, 0.0, 4, 4, 0.4, 0.3),
+    Difficulty.HARD: StubProfile(2, 2.6, 1.25, 0.05, 2, 2, 0.5, 0.45),
+    Difficulty.EXPERT: StubProfile(2, 3.6, 1.75, 0.1, 2, 2, 0.6, 0.55),
+    Difficulty.EXPERT_PLUS: StubProfile(4, 4.8, 2.5, 0.15, 1, 2, 0.7, 0.6),
 }
 
 _DOWN = {CutDirection.DOWN, CutDirection.DOWN_LEFT, CutDirection.DOWN_RIGHT}
@@ -74,7 +81,16 @@ _DIRS = {
     (Color.BLUE, True): (CutDirection.DOWN, CutDirection.DOWN_RIGHT, CutDirection.DOWN_LEFT),
     (Color.BLUE, False): (CutDirection.UP, CutDirection.UP_RIGHT, CutDirection.UP_LEFT),
 }
-_COLUMNS = {Color.RED: (1, 0), Color.BLUE: (2, 3)}  # (inner, outer)
+# Preferred columns per hand and lean (-1 = body to the left, +1 = to the right).
+_COLUMNS = {
+    (Color.RED, 0): (1, 0),
+    (Color.BLUE, 0): (2, 3),
+    (Color.RED, -1): (0, 1),
+    (Color.BLUE, -1): (1, 2),
+    (Color.RED, 1): (2, 1),
+    (Color.BLUE, 1): (3, 2),
+}
+WALL_HEIGHT = 5  # full height: it has to be leaned around, not ducked
 
 
 def _feature(analysis: AudioAnalysis, name: str, n_ticks: int) -> np.ndarray:
@@ -145,7 +161,8 @@ class StubGenerator:
 
         times = self._select_times(analysis, profile, target_nps, tech, temperature, rng)
         state = self.checker.state(dmap, beatmap)
-        self._place(dmap, state, analysis, times, profile, tech, temperature, rng)
+        walls = request.allow_obstacles
+        self._place(dmap, state, analysis, times, profile, tech, temperature, rng, walls)
         return dmap
 
     def default_nps(self, difficulty: Difficulty, mode: Characteristic, bpm: float) -> float:
@@ -228,6 +245,7 @@ class StubGenerator:
         tech: float,
         temperature: float,
         rng: np.random.Generator,
+        walls: bool = True,
     ) -> None:
         mode = dmap.characteristic
         one_hand = mode == Characteristic.ONE_SABER
@@ -243,8 +261,20 @@ class StubGenerator:
         scores = np.array([s for _, s in times]) if times else np.zeros(0)
         strong = float(np.quantile(scores, 0.8)) if len(scores) else 0.0
         prev_beat = -math.inf
+        phrase = profile.phrase_bars * bar
+        phrase_end, lean, last_lean = -math.inf, 0, 1
 
         for beat, score in times:
+            if beat >= phrase_end - 1e-6:
+                start = beat - (beat - times[0][0]) % phrase
+                phrase_end = start + phrase
+                lean = 0
+                if rng.random() < profile.lean_share:
+                    # Usually swap sides, sometimes stay: the player moves back and forth.
+                    lean = -last_lean if rng.random() < 0.75 else last_lean
+                    last_lean = lean
+                    if walls and rng.random() < profile.wall_share:
+                        self._side_wall(dmap, state, beat, phrase_end - beat - 1.0, lean)
             if rotates and beat >= next_rotation - 1e-6:
                 angle, turn = self._rotate(dmap, state, beat, score >= strong, angle, turn, rng)
                 next_rotation = beat + profile.rotation_bars * bar
@@ -268,9 +298,9 @@ class StubGenerator:
             placed = False
             for color in order:
                 prev = last.get(color)
-                note = self._pick(
-                    state, beat, color, down[color], prev, double, dots, tech, temperature, rng
-                )
+                cols = _COLUMNS[(color, 0 if one_hand else lean)]
+                swing = (down[color], prev, double, dots)
+                note = self._pick(state, beat, color, *swing, tech, temperature, rng, cols)
                 if note is None:
                     continue
                 state.add(note)
@@ -295,6 +325,7 @@ class StubGenerator:
         tech: float,
         temperature: float,
         rng: np.random.Generator,
+        columns: tuple[int, int],
     ) -> Note | None:
         straight, outward, inward = _DIRS[(color, down)]
         if dots:
@@ -303,8 +334,8 @@ class StubGenerator:
             dirs = [(straight, 1.0 - 0.6 * tech), (outward, 0.25 + 0.5 * tech)]
             if not double:
                 dirs.append((inward, 0.05 + 0.3 * tech))
-        inner, outer = _COLUMNS[color]
-        cols = [(inner, 1.0), (outer, 0.5 + 0.5 * tech)] if not double else [(inner, 1.0)]
+        first, second = columns
+        cols = [(first, 1.0), (second, 0.7 + 0.3 * tech)] if not double else [(first, 1.0)]
         rows = [(0, 1.0), (2, 0.1 + 0.4 * tech)] if down else [(0, 1.0), (1, 0.3 + 0.4 * tech)]
         if double:
             rows = rows[:1]
@@ -323,24 +354,37 @@ class StubGenerator:
                     weights.append(w)
         allowed = state.candidates_mask(candidates)
         if not allowed.any():
-            return self._fallback(state, beat, color, down, dots)
+            return self._fallback(state, beat, color, down, dots, columns)
         w = np.array(weights)[allowed] ** (1.0 / temperature)
         options = [c for c, ok in zip(candidates, allowed, strict=True) if ok]
         return options[int(rng.choice(len(options), p=w / w.sum()))]
 
     @staticmethod
     def _fallback(
-        state: MapState, beat: float, color: Color, down: bool, dots: bool
+        state: MapState, beat: float, color: Color, down: bool, dots: bool, columns
     ) -> Note | None:
         """Any allowed note on the hand's side with the wanted swing, from the full mask."""
         mask = state.note_mask(beat, color)
         wanted = [CutDirection.ANY] if dots else sorted(_DOWN if down else _UP)
-        for x in _COLUMNS[color]:
+        for x in dict.fromkeys([*columns, *_COLUMNS[(color, 0)]]):
             for y in (0, 2, 1):
                 for d in wanted:
                     if mask[x, y, d] and not (y == 1 and x in (1, 2)):
                         return Note(beat, x, y, color, d)
         return None
+
+    @staticmethod
+    def _side_wall(
+        dmap: DifficultyMap, state: MapState, beat: float, duration: float, lean: int
+    ) -> None:
+        """A full-height wall over the two columns the player leans away from."""
+        if duration < 1.0 or beat < state.last_beat - 1e-6:
+            return
+        x = 2 if lean < 0 else 0
+        wall = Obstacle(beat, duration, x, 0, 2, WALL_HEIGHT)
+        if state.allowed(wall):
+            state.add(wall)
+            dmap.obstacles.append(wall)
 
     @staticmethod
     def _rotate(

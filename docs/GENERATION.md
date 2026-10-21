@@ -24,7 +24,9 @@ bsmapper serve            # web UI on the real pipeline; --mock for canned maps 
   per-difficulty grid by onset strength and section energy, up to a target NPS (Easy 1.0 to
   Expert+ 4.8, capped per beat so slow songs stay calm; One Saber gets 60%). Hands alternate,
   and each hand alternates down and up swings. Every candidate note is checked with
-  `MapState.candidates_mask` before it is placed. For 90/360 it adds a rotation every few
+  `MapState.candidates_mask` before it is placed. Every few bars both hands may drift a
+  column left or right (lean phrases), and from Normal up a full-height wall over the two
+  columns on the other side often makes the player lean around it. For 90/360 it adds a rotation every few
   bars (90 stays within ±45°). Its maps say so: the mapper is `bsmapper (stub)` and the
   difficulty labels are `Stub <difficulty>`.
 - **`ModelGenerator`** is the decoding loop for the WS6 model. It decodes window by window:
