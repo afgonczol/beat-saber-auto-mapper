@@ -23,6 +23,8 @@ pip install -e ".[dev,audio,ml,server]"
 ruff check . && ruff format --check .
 pytest
 ```
+Run these right before every push. `ruff format` also formats Python code blocks inside
+`.md` files, so docs written after your last check can still fail it.
 
 ## Conventions
 - Times inside the codebase are in **beats** (floats). Convert to seconds only at the audio boundary,
