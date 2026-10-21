@@ -50,8 +50,8 @@ are an error. `severity.<rule>: off` disables a rule. Pass another file with
 ```python
 from bsmapper.rules import RuleChecker, MapState, summarize
 
-issues = RuleChecker().check(dmap, beatmap)        # PlayabilityChecker
-summarize(issues, len(dmap.notes))                 # counts and rate per 100 notes, by rule
+issues = RuleChecker().check(dmap, beatmap)  # PlayabilityChecker
+summarize(issues, len(dmap.notes))  # counts and rate per 100 notes, by rule
 ```
 
 `MapState` is the incremental form. Every rule only looks back in time, and `check()` is
@@ -59,14 +59,14 @@ just `add()` over the time-sorted objects, so masks and the checker can't disagr
 
 ```python
 state = RuleChecker().state(dmap, beatmap)  # empty state; dmap only supplies mode, difficulty, NJS
-state.check(obj)        # issues adding obj would cause; does not change the state
-state.allowed(obj)      # no error-severity issue (pass severities=("error", "warning") to be stricter)
-state.add(obj)          # commit; objects must come in time order
-state.clone()           # independent copy (one per beam, or before a tentative add)
+state.check(obj)  # issues adding obj would cause; does not change the state
+state.allowed(obj)  # no error-severity issue (pass severities=("error", "warning") to be stricter)
+state.add(obj)  # commit; objects must come in time order
+state.clone()  # independent copy (one per beam, or before a tentative add)
 
-state.note_mask(beat, Color.RED)   # bool [x 4, y 3, direction 9], direction 8 = dot
-state.bomb_mask(beat)              # bool [x 4, y 3]
-state.candidates_mask(objs)        # bool per candidate; None entries are always allowed
+state.note_mask(beat, Color.RED)  # bool [x 4, y 3, direction 9], direction 8 = dot
+state.bomb_mask(beat)  # bool [x 4, y 3]
+state.candidates_mask(objs)  # bool per candidate; None entries are always allowed
 ```
 
 For WS7: a factorized tokenizer (time, colour, x, y, direction tokens) can index
