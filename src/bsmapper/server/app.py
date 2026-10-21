@@ -6,6 +6,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,11 +27,14 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from bsmapper import __version__
+from bsmapper.generation import install_map, load_config, safe_folder_name
+from bsmapper.generation.install import config_path
 from bsmapper.interfaces import LightingStyle
 from bsmapper.schema import Characteristic, Difficulty
 from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager
 from bsmapper.server.models import (
     ErrorResponse,
+    InstallResult,
     JobEvent,
     JobInfo,
     JobOptions,
@@ -47,6 +51,10 @@ SSE_KEEPALIVE_S = 15.0
 _DEFAULTS = JobOptions()
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "No such job."}}
 NOT_READY = {409: {"model": ErrorResponse, "description": "The job has no finished map yet."}}
+CHROMA_MISSING = (
+    "This map uses Chroma lighting, but Chroma.dll was not found in {dll}. Without the "
+    "Chroma mod the lights play in the default colours."
+)
 
 
 def create_app(
@@ -246,6 +254,53 @@ def _api(manager: JobManager) -> APIRouter:
         except JobBusyError as exc:
             raise HTTPException(409, str(exc)) from exc
         return snapshot(job)
+
+    @router.post(
+        "/jobs/{job_id}/install",
+        responses={
+            **NOT_FOUND,
+            409: {"model": ErrorResponse, "description": "No finished map, or the job is busy."},
+            503: {
+                "model": ErrorResponse,
+                "description": "CustomLevels not found or the config file is invalid.",
+            },
+        },
+    )
+    def job_install(job_id: str) -> InstallResult:
+        """Copy the map into Beat Saber's CustomLevels (set in ``~/.bsmapper/config.toml``).
+
+        Installing again replaces the earlier copy of this song.
+        """
+        job = get_job(job_id)
+        with job.lock:
+            result = job.result if job.info.status in TERMINAL else None
+        map_dir = job.input.work_dir / "map"
+        if result is None or not (map_dir / "Info.dat").is_file():
+            raise HTTPException(409, "map not ready")
+        try:
+            config = load_config()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, f"bad config {config_path()}: {exc}") from exc
+        beatmap = result.beatmap
+        # install_map names the installed folder after the source folder, so stage a copy.
+        name = safe_folder_name(beatmap.song_name, beatmap.song_author)
+        staged = job.input.work_dir / "install" / name
+        shutil.rmtree(staged.parent, ignore_errors=True)
+        try:
+            shutil.copytree(map_dir, staged)
+            dest = install_map(staged, config)
+        except FileNotFoundError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        finally:
+            shutil.rmtree(staged.parent, ignore_errors=True)
+        warnings = []
+        shows = [beatmap.lightshow, *(d.lightshow for d in beatmap.difficulties)]
+        chroma = job.input.options.lighting == "chroma" or any(
+            s is not None and s.uses_chroma for s in shows
+        )
+        if chroma and not config.chroma_installed():
+            warnings.append(CHROMA_MISSING.format(dll=config.chroma_dll.parent))
+        return InstallResult(path=str(dest), warnings=warnings)
 
     return router
 

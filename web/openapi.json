@@ -425,6 +425,79 @@
           }
         }
       }
+    },
+    "/api/jobs/{job_id}/install": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Install",
+        "description": "Copy the map into Beat Saber's CustomLevels (set in ``~/.bsmapper/config.toml``).\n\nInstalling again replaces the earlier copy of this song.",
+        "operationId": "job_install_api_jobs__job_id__install_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No finished map, or the job is busy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "CustomLevels not found or the config file is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1053,6 +1126,29 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "InstallResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "The installed map folder inside CustomLevels."
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Things the player should know, e.g. Chroma is not installed.",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "InstallResult"
       },
       "Issue": {
         "properties": {

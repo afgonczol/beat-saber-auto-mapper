@@ -38,6 +38,7 @@ npm run gen:api                      # rewrite src/api/schema.d.ts from it
 | `GET /api/jobs/{id}/audio` | the song for playback: the packaged `song.egg` (aligned with the map's beats) once the map is ready, else the upload |
 | `GET /api/jobs/{id}/download` | the game-ready zip |
 | `POST /api/jobs/{id}/regenerate` | one difficulty with a new seed/temperature; follow it on `/events` |
+| `POST /api/jobs/{id}/install` | copies the map into `CustomLevels` ("Install to game"); returns the installed `path` and `warnings` (e.g. Chroma lighting without `Chroma.dll`). 503 if `CustomLevels` is not found: see the config in [docs/GENERATION.md](../docs/GENERATION.md#install) |
 
 ## Layout
 

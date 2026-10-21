@@ -93,5 +93,12 @@ class RegenerateRequest(BaseModel):
     temperature: float = Field(default=1.0, gt=0.0, le=2.0)
 
 
+class InstallResult(BaseModel):
+    path: str = Field(description="The installed map folder inside CustomLevels.")
+    warnings: list[str] = Field(
+        default=[], description="Things the player should know, e.g. Chroma is not installed."
+    )
+
+
 class ErrorResponse(BaseModel):
     detail: str

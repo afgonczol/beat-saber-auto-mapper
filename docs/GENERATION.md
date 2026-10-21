@@ -49,7 +49,8 @@ the offset still follows the reaction-time target.
 
 ## Install
 
-`--install` copies the map folder into `CustomLevels`. It replaces an earlier bsmapper
+`--install` copies the map folder into `CustomLevels` (the web UI's "Install to game",
+`POST /api/jobs/{id}/install`, does the same with the folder named `Title - Artist`). It replaces an earlier bsmapper
 install of the same name and never touches a folder some other mapper made (it installs
 next to it as `Name (2)`). Paths come from `~/.bsmapper/config.toml` (or `$BSMAPPER_CONFIG`):
 
