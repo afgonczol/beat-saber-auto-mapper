@@ -176,6 +176,28 @@ def evaluate(checkpoint: Path, split: str = "test") -> None:
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Run the local web UI (WS9)."""
-    raise NotImplementedError
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    work_dir: Path = Path("out/server"),
+    web_dist: str | None = typer.Option(None, help="Built web UI folder; default: web/dist."),
+    mock_delay: float = typer.Option(0.4, help="Seconds per mock pipeline step."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Run the local web UI and jobs API (WS9). Uses the mock pipeline for now."""
+    try:
+        import uvicorn
+
+        from bsmapper.server.app import create_app
+        from bsmapper.server.mock import MockJobRunner
+    except ImportError as e:
+        raise typer.Exit(
+            f"The server needs the server extra: pip install -e .[server] ({e})"
+        ) from e
+
+    _setup_logging(verbose)
+    application = create_app(
+        MockJobRunner(step_delay=mock_delay), work_dir, Path(web_dist) if web_dist else None
+    )
+    typer.echo(f"bsmapper UI on http://{host}:{port}/  (API docs at /docs)")
+    uvicorn.run(application, host=host, port=port, log_level="debug" if verbose else "info")

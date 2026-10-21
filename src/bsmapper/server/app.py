@@ -1,0 +1,267 @@
+"""FastAPI app: the jobs API under ``/api`` and the built web UI (``web/dist``) at ``/``."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import mimetypes
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import (
+    APIRouter,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from bsmapper import __version__
+from bsmapper.interfaces import LightingStyle
+from bsmapper.schema import Characteristic, Difficulty
+from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager
+from bsmapper.server.models import (
+    ErrorResponse,
+    JobEvent,
+    JobInfo,
+    JobOptions,
+    MapPreview,
+    RegenerateRequest,
+)
+from bsmapper.server.runner import JobRunner
+
+REPO_WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
+DEFAULT_WORK_DIR = Path("out") / "server"
+SSE_POLL_S = 0.1
+SSE_KEEPALIVE_S = 15.0
+
+_DEFAULTS = JobOptions()
+NOT_FOUND = {404: {"model": ErrorResponse, "description": "No such job."}}
+NOT_READY = {409: {"model": ErrorResponse, "description": "The job has no finished map yet."}}
+
+
+def create_app(
+    runner: JobRunner | None = None,
+    work_dir: Path | None = None,
+    web_dist: Path | None = None,
+) -> FastAPI:
+    """Build the app. Defaults: the mock runner, ``out/server`` and the repo's ``web/dist``."""
+    if runner is None:
+        from bsmapper.server.mock import MockJobRunner
+
+        runner = MockJobRunner()
+    manager = JobManager(runner, work_dir or DEFAULT_WORK_DIR)
+    if web_dist is None:
+        env = os.environ.get("BSMAPPER_WEB_DIST")
+        web_dist = Path(env) if env else REPO_WEB_DIST
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        manager.start()
+        yield
+        manager.stop()
+
+    app = FastAPI(
+        title="bsmapper",
+        version=__version__,
+        description="Local jobs API behind the bsmapper web UI. Map times are in beats.",
+        lifespan=lifespan,
+    )
+    app.state.jobs = manager
+    app.include_router(_api(manager), prefix="/api")
+    _add_event_schema(app)
+
+    if (web_dist / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
+    else:
+
+        @app.get("/", include_in_schema=False)
+        def no_ui() -> HTMLResponse:
+            return HTMLResponse(
+                "<h1>bsmapper</h1><p>The web UI is not built. Run <code>npm install && "
+                "npm run build</code> in <code>web/</code>, or see <a href='/docs'>/docs</a> "
+                "for the API.</p>"
+            )
+
+    return app
+
+
+def _api(manager: JobManager) -> APIRouter:
+    router = APIRouter(tags=["jobs"])
+
+    def get_job(job_id: str) -> Job:
+        job = manager.get(job_id)
+        if job is None:
+            raise HTTPException(404, f"no job {job_id}")
+        return job
+
+    def snapshot(job: Job) -> JobInfo:
+        with job.lock:
+            return job.info.model_copy(deep=True)
+
+    @router.post(
+        "/jobs",
+        status_code=201,
+        responses={415: {"model": ErrorResponse, "description": "Not an audio file."}},
+    )
+    def create_job(
+        audio: Annotated[UploadFile, File(description="The song (mp3, ogg/egg, wav, flac, ...).")],
+        modes: Annotated[
+            list[Characteristic], Form(description="Repeat the field for several modes.")
+        ] = _DEFAULTS.modes,
+        difficulties: Annotated[
+            list[Difficulty], Form(description="Repeat the field for several difficulties.")
+        ] = _DEFAULTS.difficulties,
+        lighting: Annotated[LightingStyle, Form()] = _DEFAULTS.lighting,
+        style: Annotated[
+            float | None,
+            Form(ge=0.0, le=1.0, description="0 = flowy, 1 = technical; omit for no preference."),
+        ] = None,
+        seed: Annotated[int, Form()] = 0,
+    ) -> JobInfo:
+        """Upload a song and queue a generation job. Options are multipart form fields."""
+        options = JobOptions(
+            modes=modes, difficulties=difficulties, lighting=lighting, style=style, seed=seed
+        )
+        try:
+            job = manager.submit(audio.filename or "song", audio.file, options)
+        except ValueError as exc:
+            raise HTTPException(415, str(exc)) from exc
+        return snapshot(job)
+
+    @router.get("/jobs/{job_id}", responses=NOT_FOUND)
+    def job_status(job_id: str) -> JobInfo:
+        """Status and progress of a job."""
+        return snapshot(get_job(job_id))
+
+    @router.get(
+        "/jobs/{job_id}/events",
+        response_class=StreamingResponse,
+        responses={
+            **NOT_FOUND,
+            200: {
+                "description": "Server-sent events. Each `data:` line is one JobEvent as JSON, "
+                "`event:` is its type and `id:` its seq. The stream ends after a done/failed "
+                "status event.",
+                "content": {
+                    "text/event-stream": {"schema": {"$ref": "#/components/schemas/JobEvent"}}
+                },
+            },
+        },
+    )
+    async def job_events(
+        job_id: str,
+        request: Request,
+        after: Annotated[int | None, Query(description="Only events with seq > after.")] = None,
+        last_event_id: Annotated[int | None, Header(include_in_schema=False)] = None,
+    ) -> StreamingResponse:
+        """Stream progress as server-sent events (replays missed ones on reconnect)."""
+        job = get_job(job_id)
+        # A reconnecting EventSource repeats the URL and adds Last-Event-ID; take the later one.
+        start = max(after or 0, last_event_id or 0)
+
+        async def stream() -> AsyncIterator[str]:
+            seq, idle = start, 0.0
+            yield "retry: 2000\n\n"
+            while not await request.is_disconnected():
+                new = job.events_after(seq)
+                for event in new:
+                    seq = event.seq
+                    yield _sse(event)
+                if not new and job.info.status in TERMINAL:
+                    return
+                idle = 0.0 if new else idle + SSE_POLL_S
+                if idle >= SSE_KEEPALIVE_S:
+                    idle = 0.0
+                    yield ": keepalive\n\n"
+                await asyncio.sleep(SSE_POLL_S)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @router.get("/jobs/{job_id}/map", responses={**NOT_FOUND, **NOT_READY})
+    def job_map(job_id: str) -> MapPreview:
+        """The generated map for the preview, plus playability warnings."""
+        preview = get_job(job_id).preview()
+        if preview is None:
+            raise HTTPException(409, "map not ready")
+        return preview
+
+    @router.get(
+        "/jobs/{job_id}/audio",
+        response_class=FileResponse,
+        responses={**NOT_FOUND, 200: {"content": {"audio/*": {}}, "description": "The upload."}},
+    )
+    def job_audio(job_id: str) -> FileResponse:
+        """The uploaded song, for playback in the preview (supports range requests)."""
+        path = get_job(job_id).input.audio_path
+        media = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if path.suffix == ".egg":
+            media = "audio/ogg"
+        return FileResponse(path, media_type=media)
+
+    @router.get(
+        "/jobs/{job_id}/download",
+        response_class=FileResponse,
+        responses={
+            **NOT_FOUND,
+            **NOT_READY,
+            200: {"content": {"application/zip": {}}, "description": "Game-ready map zip."},
+        },
+    )
+    def job_download(job_id: str) -> FileResponse:
+        """The packaged map as a zip (Info.dat, difficulties, song.egg, cover)."""
+        job = get_job(job_id)
+        if job.result is None:
+            raise HTTPException(409, "map not ready")
+        zip_path = job.result.zip_path
+        return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
+
+    @router.post(
+        "/jobs/{job_id}/regenerate",
+        status_code=202,
+        responses={**NOT_FOUND, 409: {"model": ErrorResponse, "description": "Job is busy."}},
+    )
+    def job_regenerate(job_id: str, request: RegenerateRequest) -> JobInfo:
+        """Redo one difficulty with a new seed/temperature. Follow it on /events."""
+        job = get_job(job_id)
+        try:
+            manager.regenerate(job, request)
+        except JobBusyError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return snapshot(job)
+
+    return router
+
+
+def _add_event_schema(app: FastAPI) -> None:
+    """JobEvent only appears inside the SSE stream, so FastAPI would leave it out of the spec."""
+    base = app.openapi
+
+    def openapi() -> dict:
+        spec = base()
+        schemas = spec.setdefault("components", {}).setdefault("schemas", {})
+        if "JobEvent" not in schemas:
+            event = JobEvent.model_json_schema(ref_template="#/components/schemas/{model}")
+            schemas.update(event.pop("$defs", {}))
+            schemas["JobEvent"] = event
+        return spec
+
+    app.openapi = openapi  # type: ignore[method-assign]
+
+
+def _sse(event: JobEvent) -> str:
+    data = json.dumps(event.model_dump(mode="json"), separators=(",", ":"))
+    return f"id: {event.seq}\nevent: {event.type}\ndata: {data}\n\n"

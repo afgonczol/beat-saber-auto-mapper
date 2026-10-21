@@ -1,0 +1,1522 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "bsmapper",
+    "description": "Local jobs API behind the bsmapper web UI. Map times are in beats.",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/api/jobs": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create Job",
+        "description": "Upload a song and queue a generation job. Options are multipart form fields.",
+        "operationId": "create_job_api_jobs_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_job_api_jobs_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not an audio file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Status",
+        "description": "Status and progress of a job.",
+        "operationId": "job_status_api_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/events": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Events",
+        "description": "Stream progress as server-sent events (replays missed ones on reconnect).",
+        "operationId": "job_events_api_jobs__job_id__events_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events with seq > after.",
+              "title": "After"
+            },
+            "description": "Only events with seq > after."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events. Each `data:` line is one JobEvent as JSON, `event:` is its type and `id:` its seq. The stream ends after a done/failed status event.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobEvent"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/map": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Map",
+        "description": "The generated map for the preview, plus playability warnings.",
+        "operationId": "job_map_api_jobs__job_id__map_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The job has no finished map yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/audio": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Audio",
+        "description": "The uploaded song, for playback in the preview (supports range requests).",
+        "operationId": "job_audio_api_jobs__job_id__audio_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The upload.",
+            "content": {
+              "audio/*": {}
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/download": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Download",
+        "description": "The packaged map as a zip (Info.dat, difficulties, song.egg, cover).",
+        "operationId": "job_download_api_jobs__job_id__download_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Game-ready map zip.",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The job has no finished map yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/regenerate": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Regenerate",
+        "description": "Redo one difficulty with a new seed/temperature. Follow it on /events.",
+        "operationId": "job_regenerate_api_jobs__job_id__regenerate_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is busy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Arc": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "color": {
+            "$ref": "#/components/schemas/Color"
+          },
+          "x": {
+            "type": "integer",
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "title": "Y"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CutDirection"
+          },
+          "tail_beat": {
+            "type": "number",
+            "title": "Tail Beat"
+          },
+          "tail_x": {
+            "type": "integer",
+            "title": "Tail X"
+          },
+          "tail_y": {
+            "type": "integer",
+            "title": "Tail Y"
+          },
+          "tail_direction": {
+            "$ref": "#/components/schemas/CutDirection"
+          },
+          "head_multiplier": {
+            "type": "number",
+            "title": "Head Multiplier",
+            "default": 1.0
+          },
+          "tail_multiplier": {
+            "type": "number",
+            "title": "Tail Multiplier",
+            "default": 1.0
+          },
+          "mid_anchor": {
+            "type": "integer",
+            "title": "Mid Anchor",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "color",
+          "x",
+          "y",
+          "direction",
+          "tail_beat",
+          "tail_x",
+          "tail_y",
+          "tail_direction"
+        ],
+        "title": "Arc",
+        "description": "v3 'slider'. Head and tail usually sit on notes of the same color."
+      },
+      "BasicEvent": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "type": {
+            "type": "integer",
+            "title": "Type"
+          },
+          "value": {
+            "type": "integer",
+            "title": "Value"
+          },
+          "float_value": {
+            "type": "number",
+            "title": "Float Value",
+            "default": 1.0
+          },
+          "color": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 4,
+                "minItems": 4
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "custom_data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "type",
+          "value"
+        ],
+        "title": "BasicEvent",
+        "description": "Classic (v2-style) light/environment event; also valid in v3/v4.\n\n``type`` follows the game's event type ids (0-4 lights, 8 ring spin,\n9 ring zoom, 12/13 laser speed, ...). ``color`` is an optional Chroma RGBA."
+      },
+      "Beatmap": {
+        "properties": {
+          "song_name": {
+            "type": "string",
+            "title": "Song Name"
+          },
+          "bpm": {
+            "type": "number",
+            "title": "Bpm"
+          },
+          "audio_path": {
+            "type": "string",
+            "title": "Audio Path",
+            "default": "song.egg"
+          },
+          "song_sub_name": {
+            "type": "string",
+            "title": "Song Sub Name",
+            "default": ""
+          },
+          "song_author": {
+            "type": "string",
+            "title": "Song Author",
+            "default": ""
+          },
+          "mapper": {
+            "type": "string",
+            "title": "Mapper",
+            "default": "bsmapper"
+          },
+          "cover_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Path"
+          },
+          "preview_start": {
+            "type": "number",
+            "title": "Preview Start",
+            "default": 10.0
+          },
+          "preview_duration": {
+            "type": "number",
+            "title": "Preview Duration",
+            "default": 10.0
+          },
+          "environment": {
+            "type": "string",
+            "title": "Environment",
+            "default": "DefaultEnvironment"
+          },
+          "song_time_offset": {
+            "type": "number",
+            "title": "Song Time Offset",
+            "default": 0.0
+          },
+          "bpm_changes": {
+            "items": {
+              "$ref": "#/components/schemas/BpmChange"
+            },
+            "type": "array",
+            "title": "Bpm Changes"
+          },
+          "difficulties": {
+            "items": {
+              "$ref": "#/components/schemas/DifficultyMap"
+            },
+            "type": "array",
+            "title": "Difficulties"
+          },
+          "lightshow": {
+            "$ref": "#/components/schemas/Lightshow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "song_name",
+          "bpm"
+        ],
+        "title": "Beatmap"
+      },
+      "Body_create_job_api_jobs_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio",
+            "description": "The song (mp3, ogg/egg, wav, flac, ...)."
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/Characteristic"
+            },
+            "type": "array",
+            "title": "Modes",
+            "description": "Repeat the field for several modes.",
+            "default": [
+              "Standard"
+            ]
+          },
+          "difficulties": {
+            "items": {
+              "$ref": "#/components/schemas/Difficulty"
+            },
+            "type": "array",
+            "title": "Difficulties",
+            "description": "Repeat the field for several difficulties.",
+            "default": [
+              "Hard",
+              "Expert",
+              "ExpertPlus"
+            ]
+          },
+          "lighting": {
+            "type": "string",
+            "enum": [
+              "vanilla",
+              "v3",
+              "chroma"
+            ],
+            "title": "Lighting",
+            "default": "v3"
+          },
+          "style": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Style",
+            "description": "0 = flowy, 1 = technical; omit for no preference."
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_create_job_api_jobs_post"
+      },
+      "Bomb": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "x": {
+            "type": "integer",
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "title": "Y"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "x",
+          "y"
+        ],
+        "title": "Bomb"
+      },
+      "BpmChange": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "bpm": {
+            "type": "number",
+            "title": "Bpm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "bpm"
+        ],
+        "title": "BpmChange"
+      },
+      "Chain": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "color": {
+            "$ref": "#/components/schemas/Color"
+          },
+          "x": {
+            "type": "integer",
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "title": "Y"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CutDirection"
+          },
+          "tail_beat": {
+            "type": "number",
+            "title": "Tail Beat"
+          },
+          "tail_x": {
+            "type": "integer",
+            "title": "Tail X"
+          },
+          "tail_y": {
+            "type": "integer",
+            "title": "Tail Y"
+          },
+          "slice_count": {
+            "type": "integer",
+            "title": "Slice Count"
+          },
+          "squish": {
+            "type": "number",
+            "title": "Squish",
+            "default": 1.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "color",
+          "x",
+          "y",
+          "direction",
+          "tail_beat",
+          "tail_x",
+          "tail_y",
+          "slice_count"
+        ],
+        "title": "Chain",
+        "description": "v3 'burst slider'."
+      },
+      "Characteristic": {
+        "type": "string",
+        "enum": [
+          "Standard",
+          "OneSaber",
+          "NoArrows",
+          "90Degree",
+          "360Degree",
+          "Lightshow"
+        ],
+        "title": "Characteristic"
+      },
+      "Color": {
+        "type": "integer",
+        "enum": [
+          0,
+          1
+        ],
+        "title": "Color"
+      },
+      "ColorBoostEvent": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "on": {
+            "type": "boolean",
+            "title": "On"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "on"
+        ],
+        "title": "ColorBoostEvent"
+      },
+      "CutDirection": {
+        "type": "integer",
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "title": "CutDirection"
+      },
+      "Difficulty": {
+        "type": "string",
+        "enum": [
+          "Easy",
+          "Normal",
+          "Hard",
+          "Expert",
+          "ExpertPlus"
+        ],
+        "title": "Difficulty"
+      },
+      "DifficultyMap": {
+        "properties": {
+          "characteristic": {
+            "$ref": "#/components/schemas/Characteristic"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "njs": {
+            "type": "number",
+            "title": "Njs",
+            "default": 16.0
+          },
+          "njs_offset": {
+            "type": "number",
+            "title": "Njs Offset",
+            "default": 0.0
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/Note"
+            },
+            "type": "array",
+            "title": "Notes"
+          },
+          "bombs": {
+            "items": {
+              "$ref": "#/components/schemas/Bomb"
+            },
+            "type": "array",
+            "title": "Bombs"
+          },
+          "obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/Obstacle"
+            },
+            "type": "array",
+            "title": "Obstacles"
+          },
+          "arcs": {
+            "items": {
+              "$ref": "#/components/schemas/Arc"
+            },
+            "type": "array",
+            "title": "Arcs"
+          },
+          "chains": {
+            "items": {
+              "$ref": "#/components/schemas/Chain"
+            },
+            "type": "array",
+            "title": "Chains"
+          },
+          "rotations": {
+            "items": {
+              "$ref": "#/components/schemas/RotationEvent"
+            },
+            "type": "array",
+            "title": "Rotations"
+          },
+          "lightshow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Lightshow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "characteristic",
+          "difficulty"
+        ],
+        "title": "DifficultyMap"
+      },
+      "DifficultyWarning": {
+        "properties": {
+          "characteristic": {
+            "$ref": "#/components/schemas/Characteristic"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/Issue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "characteristic",
+          "difficulty",
+          "issue"
+        ],
+        "title": "DifficultyWarning",
+        "description": "A playability issue (``interfaces.Issue``) tagged with the difficulty it belongs to."
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse"
+      },
+      "EventBoxGroup": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "color",
+              "rotation",
+              "translation",
+              "fx"
+            ],
+            "title": "Kind"
+          },
+          "boxes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Boxes",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "group_id",
+          "kind"
+        ],
+        "title": "EventBoxGroup",
+        "description": "v3 group lighting. ``boxes`` stays loosely typed until the lighting\nworkstream refines it; renderers own the per-environment group ids."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Issue": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "title": "Severity"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "beat",
+          "severity",
+          "message"
+        ],
+        "title": "Issue"
+      },
+      "JobInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Name of the uploaded audio file."
+          },
+          "options": {
+            "$ref": "#/components/schemas/JobOptions"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage",
+            "description": "Current pipeline stage, e.g. 'generate'.",
+            "default": ""
+          },
+          "progress": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "default": 0.0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "description": "Bumped every time the map changes.",
+            "default": 0
+          },
+          "last_seq": {
+            "type": "integer",
+            "title": "Last Seq",
+            "description": "seq of the latest event; pass it as ?after= to follow new ones.",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "filename",
+          "options"
+        ],
+        "title": "JobInfo"
+      },
+      "JobOptions": {
+        "properties": {
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/Characteristic"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Modes",
+            "default": [
+              "Standard"
+            ]
+          },
+          "difficulties": {
+            "items": {
+              "$ref": "#/components/schemas/Difficulty"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Difficulties",
+            "default": [
+              "Hard",
+              "Expert",
+              "ExpertPlus"
+            ]
+          },
+          "lighting": {
+            "type": "string",
+            "enum": [
+              "vanilla",
+              "v3",
+              "chroma"
+            ],
+            "title": "Lighting",
+            "default": "v3"
+          },
+          "style": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Style",
+            "description": "0 = flowy, 1 = technical, null = no preference."
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "JobOptions",
+        "description": "What to generate. Sent as multipart form fields next to the audio file."
+      },
+      "JobStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed"
+        ],
+        "title": "JobStatus",
+        "type": "string"
+      },
+      "Lightshow": {
+        "properties": {
+          "basic_events": {
+            "items": {
+              "$ref": "#/components/schemas/BasicEvent"
+            },
+            "type": "array",
+            "title": "Basic Events"
+          },
+          "boost_events": {
+            "items": {
+              "$ref": "#/components/schemas/ColorBoostEvent"
+            },
+            "type": "array",
+            "title": "Boost Events"
+          },
+          "event_box_groups": {
+            "items": {
+              "$ref": "#/components/schemas/EventBoxGroup"
+            },
+            "type": "array",
+            "title": "Event Box Groups"
+          },
+          "uses_chroma": {
+            "type": "boolean",
+            "title": "Uses Chroma",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "Lightshow"
+      },
+      "MapPreview": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "duration_s": {
+            "type": "number",
+            "title": "Duration S",
+            "description": "Song length in seconds."
+          },
+          "beatmap": {
+            "$ref": "#/components/schemas/Beatmap"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/DifficultyWarning"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "default": []
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "Job-level remarks, e.g. packaging fallbacks.",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "revision",
+          "duration_s",
+          "beatmap"
+        ],
+        "title": "MapPreview"
+      },
+      "Note": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "x": {
+            "type": "integer",
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "title": "Y"
+          },
+          "color": {
+            "$ref": "#/components/schemas/Color"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CutDirection"
+          },
+          "angle_offset": {
+            "type": "integer",
+            "title": "Angle Offset",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "x",
+          "y",
+          "color",
+          "direction"
+        ],
+        "title": "Note"
+      },
+      "Obstacle": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "duration": {
+            "type": "number",
+            "title": "Duration"
+          },
+          "x": {
+            "type": "integer",
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "title": "Y"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "duration",
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "Obstacle"
+      },
+      "RegenerateRequest": {
+        "properties": {
+          "characteristic": {
+            "$ref": "#/components/schemas/Characteristic"
+          },
+          "difficulty": {
+            "$ref": "#/components/schemas/Difficulty"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed"
+          },
+          "temperature": {
+            "type": "number",
+            "maximum": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Temperature",
+            "default": 1.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "characteristic",
+          "difficulty",
+          "seed"
+        ],
+        "title": "RegenerateRequest"
+      },
+      "RotationEvent": {
+        "properties": {
+          "beat": {
+            "type": "number",
+            "title": "Beat"
+          },
+          "degrees": {
+            "type": "integer",
+            "title": "Degrees"
+          },
+          "early": {
+            "type": "boolean",
+            "title": "Early",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "beat",
+          "degrees"
+        ],
+        "title": "RotationEvent",
+        "description": "90/360 rotation. ``degrees`` is relative and a multiple of 15."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "JobEvent": {
+        "description": "One server-sent event. ``type`` is also the SSE ``event:`` name and ``seq`` its ``id:``.\n\nA ``status`` event with status ``done`` or ``failed`` ends the current run; the server then\ncloses the stream, so clients should close their EventSource on it.",
+        "properties": {
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "status",
+              "progress"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "stage": {
+            "default": "",
+            "title": "Stage",
+            "type": "string"
+          },
+          "progress": {
+            "default": 0.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "number"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "status"
+        ],
+        "title": "JobEvent",
+        "type": "object"
+      }
+    }
+  }
+}
