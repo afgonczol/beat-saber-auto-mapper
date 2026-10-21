@@ -9,6 +9,7 @@ export type JobStatus = S["JobStatus"];
 export type MapPreview = S["MapPreview"];
 export type DifficultyWarning = S["DifficultyWarning"];
 export type RegenerateRequest = S["RegenerateRequest"];
+export type InstallResult = S["InstallResult"];
 export type Beatmap = S["Beatmap"];
 export type DifficultyMap = S["DifficultyMap"];
 export type Lightshow = S["Lightshow"];
@@ -80,6 +81,11 @@ export async function regenerate(id: string, req: RegenerateRequest): Promise<Jo
       body: JSON.stringify(req),
     }),
   );
+}
+
+/** Copy the finished map into Beat Saber's CustomLevels (path from ~/.bsmapper/config.toml). */
+export async function installJob(id: string): Promise<InstallResult> {
+  return json(await fetch(`${BASE}/jobs/${id}/install`, { method: "POST" }));
 }
 
 export const audioUrl = (id: string) => `${BASE}/jobs/${id}/audio`;

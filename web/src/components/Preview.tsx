@@ -6,8 +6,10 @@ import {
   TERMINAL,
   audioUrl,
   downloadUrl,
+  installJob,
   type Characteristic,
   type Difficulty,
+  type InstallResult,
   type JobInfo,
   type MapPreview,
   type RegenerateRequest,
@@ -182,16 +184,59 @@ export function Preview({ info, map, regenerate }: Props) {
           <a className={`button primary ${busy ? "disabled" : ""}`} href={busy ? undefined : downloadUrl(map.job_id)} download>
             Download .zip
           </a>
-          <button
-            className="button"
-            disabled
-            title="Coming with the real pipeline (issue #13): copies the map into Beat Saber's CustomLevels."
-          >
-            Install to game
-          </button>
+          <InstallButton jobId={map.job_id} revision={map.revision} busy={busy} />
         </div>
       </aside>
     </div>
+  );
+}
+
+function InstallButton({ jobId, revision, busy }: { jobId: string; revision: number; busy: boolean }) {
+  const [installing, setInstalling] = useState(false);
+  const [result, setResult] = useState<InstallResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // A regenerated map is not in the game until it is installed again.
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [jobId, revision]);
+
+  const install = () => {
+    setInstalling(true);
+    setError(null);
+    installJob(jobId)
+      .then(setResult, (e) => {
+        setResult(null);
+        setError((e as Error).message);
+      })
+      .finally(() => setInstalling(false));
+  };
+  return (
+    <>
+      <button
+        className="button"
+        disabled={busy || installing}
+        onClick={install}
+        title="Copy the map into Beat Saber's CustomLevels folder (set in ~/.bsmapper/config.toml)."
+      >
+        {installing ? "Installing…" : result ? "Reinstall" : "Install to game"}
+      </button>
+      {(result || error) && (
+        <div className="install-msg">
+          {result && (
+            <div className="ok" title={result.path}>
+              Installed to {result.path}
+            </div>
+          )}
+          {result?.warnings?.map((w) => (
+            <div key={w} className="warn">
+              {w}
+            </div>
+          ))}
+          {error && <div className="error">{error}</div>}
+        </div>
+      )}
+    </>
   );
 }
 

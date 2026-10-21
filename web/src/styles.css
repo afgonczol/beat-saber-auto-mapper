@@ -172,6 +172,9 @@ button.warning:hover { background: #1c2030; }
 .temp output { float: right; color: var(--text); font-variant-numeric: tabular-nums; }
 .regen-busy { display: grid; gap: 6px; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.install-msg { grid-column: 1 / -1; display: grid; gap: 4px; font-size: 0.82rem; overflow-wrap: anywhere; }
+.install-msg .ok { color: var(--ok); }
+.install-msg .warn { color: var(--warn); }
 
 @media (max-width: 960px) {
   .upload, .preview { grid-template-columns: 1fr; }
