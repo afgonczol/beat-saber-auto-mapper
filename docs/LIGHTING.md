@@ -90,8 +90,47 @@ environment, add a file; no code changes are needed.
 that motion groups can rotate on the chosen axis. The tests run it on every bundled
 profile.
 
-The channel-to-group assignments and rotation axes are a first guess from the group names.
-They still need checking in-game.
+The channel-to-group assignments started as a guess from the group names. Axes, waves and
+spreads were then checked against human-made maps (below). They still need checking in-game.
+
+### Calibration against human-made maps
+
+The local dataset contains 20 maps (zips) for these environments: 8 Weave, 9 The Second
+and 3 EDM. Each was read with `read_map_report`, using its fullest lightshow. Every
+statistic is computed per map and then the median is taken across maps, so one dense map
+(one Weave map has 39k box groups) cannot dominate. Axis counts only use rotation boxes
+that move to a non-zero angle. Many mappers reset X and Y together at the same beat, and
+those resets would otherwise show a fake 50/50 split. Single events on group ids beyond
+the environment's range come from one template map and are ignored.
+
+| | Weave (8) | The Second (9) | EDM (3) |
+|---|---|---|---|
+| Colour groups used | all 16 in 8/8 maps. Inner square 4–7 is busiest (~11% of colour box groups each for 4/5), distant 12–15 least (~4%) | all 14. Runway 2/3 busiest (~12% each), rings small 1 ~17%, top/bottom lasers 2.5–4% | all 12 colour groups. Circles 0, 4, 5 busiest (~13%), circles close 1 rarely (~2%) |
+| Lit together | L/R pairs (4,5) (6,7) (14,15) (0,1) (2,3) (8,9); inner square 4–7 as a block | L/R pairs (2,3) (4,5) (10,11) (8,9) (6,7) (12,13) | (2,3), (0,2), single source circles 4/5 with 2/3 |
+| Rotation axis `a` (moving boxes) | X dominates groups 0–13 (majority X in 7–8/8 maps, mostly 85–100%). Distant L/R 14/15 mixed (X 5/8, Y 3/8) | rings 0/1: X 100% in every map. Spotlights 4/5: X in 7/9, 50/50 in 2. Lasers 6–13 X ≥ 50% in every map | circle rotations 13–15: Y (89–100%) in 3/3. Single source lasers 6–11 X in 1 map, 50/50 in the other |
+| Rotation spread `s` (mean abs per map, median) | inner 4–7: 5.5 (0–31); outer + side lasers: 7.9 (0–18) | rings: 20 (0–71); lasers 6–13: 16 (4–54); spotlights: 4.8 | always 0 on circle rotations; lasers 6–11: 0 and 7.8 |
+| Colour wave `w` (d = 1) | share of boxes with a wave: inner 56%, outer 54%, side 42%, distant 19%. Median w 0.44 (inner), 0.45 (outer), 0.37 (side), 0.35 (distant) | rings: 58% of boxes, median w 0.75. Runway: 11%, w 0.5. Lasers and spotlights: ≤ 15% | rare (0% median, one map uses w 0.4–1 on circles) |
+| Basic events | effectively none (1 type-4 event in 1 map) | types 0, 1, 4, 9 in 7–8/9 maps; 2/3 in 3/9; 12/13 none | 0, 1, 4 in 1/3 maps |
+
+Changes made from this:
+
+- **Weave**: the laser sweeps (outer and side squares) now rotate on X instead of Y. Channel
+  waves are now 0.5 for rings (inner square) and 0.25 for the lasers
+  (was 0.125 / 0). The back channel (distant) stays at 0.25, because only 19% of distant
+  boxes use a wave. The laser wave stays below the 0.25-beat minimum onset spacing.
+  The spin (inner square, X) and spreads already matched the data.
+- **The Second**: the ring spin now turns on X instead of Y. The ring wave went from 0.25
+  to 0.75. The sweeps now include the spotlights (4 left, 5 right), which are rotated in
+  every map. They also get a 15° spread instead of 0. Basic types already matched.
+- **EDM**: unchanged. Three maps support the Y axis for circle-rotation spins and zero spin
+  spread, but they are too few to move the channels or waves.
+
+Not changed despite a hint in the data:
+
+- Mappers often light top and bottom pairs together. The laser channels keep the left/right
+  split anyway, because L0 alternates left and right lasers.
+- In the EDM maps, the single source circles 4/5 tend to light with circles 2/3 rather
+  than with the lasers. Three maps are too few to move them.
 
 ## Dev script
 

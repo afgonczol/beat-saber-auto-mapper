@@ -1,7 +1,7 @@
 {
   "environment": "EDMEnvironment",
   "name": "EDM",
-  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts).",
+  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts). Checked against 3 human-made maps (docs/LIGHTING.md); too few to change the guesses.",
   "basic_types": {
     "0": "Lane Lights Bottom",
     "1": "Lane Lights Top",
