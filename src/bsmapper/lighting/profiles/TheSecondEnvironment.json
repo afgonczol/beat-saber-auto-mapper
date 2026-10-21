@@ -1,0 +1,66 @@
+{
+  "environment": "TheSecondEnvironment",
+  "name": "The Second",
+  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts).",
+  "basic_types": {
+    "0": "Buildings",
+    "1": "Logo",
+    "2": "Left Flags",
+    "3": "Right Flags",
+    "4": "Runway",
+    "9": "Ring Zoom"
+  },
+  "channels": {
+    "0": {
+      "groups": [6, 7, 8, 9],
+      "wave": 0.0
+    },
+    "1": {
+      "groups": [0, 1],
+      "wave": 0.25
+    },
+    "2": {
+      "groups": [10, 12, 4],
+      "wave": 0.0
+    },
+    "3": {
+      "groups": [11, 13, 5],
+      "wave": 0.0
+    },
+    "4": {
+      "groups": [2, 3],
+      "wave": 0.5
+    }
+  },
+  "spin": {
+    "groups": [0, 1],
+    "axis": 1,
+    "spread": 15.0
+  },
+  "left_sweep": {
+    "groups": [6, 8, 10, 12],
+    "axis": 0,
+    "spread": 0.0
+  },
+  "right_sweep": {
+    "groups": [7, 9, 11, 13],
+    "axis": 0,
+    "spread": 0.0
+  },
+  "groups": {
+    "0": {"name": "Rings Big", "count": 15, "color": true, "rotation": [true, true, false]},
+    "1": {"name": "Rings Small", "count": 24, "color": true, "rotation": [true, true, false]},
+    "2": {"name": "Runway Left", "count": 12, "color": true, "rotation": [false, false, false]},
+    "3": {"name": "Runway Right", "count": 12, "color": true, "rotation": [false, false, false]},
+    "4": {"name": "Spotlight Left", "count": 12, "color": true, "rotation": [true, true, false]},
+    "5": {"name": "Spotlight Right", "count": 12, "color": true, "rotation": [true, true, false]},
+    "6": {"name": "Top Lasers Left Bottom", "count": 4, "color": true, "rotation": [true, true, false]},
+    "7": {"name": "Top Lasers Right Bottom", "count": 4, "color": true, "rotation": [true, true, false]},
+    "8": {"name": "Top Lasers Left Top", "count": 4, "color": true, "rotation": [true, true, false]},
+    "9": {"name": "Top Lasers Right Top", "count": 4, "color": true, "rotation": [true, true, false]},
+    "10": {"name": "Bottom Lasers Left Bottom", "count": 4, "color": true, "rotation": [true, true, false]},
+    "11": {"name": "Bottom Lasers Right Bottom", "count": 4, "color": true, "rotation": [true, true, false]},
+    "12": {"name": "Bottom Lasers Left Top", "count": 4, "color": true, "rotation": [true, true, false]},
+    "13": {"name": "Bottom Lasers Right Top", "count": 4, "color": true, "rotation": [true, true, false]}
+  }
+}
