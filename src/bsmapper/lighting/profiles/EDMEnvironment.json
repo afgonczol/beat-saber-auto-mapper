@@ -1,0 +1,67 @@
+{
+  "environment": "EDMEnvironment",
+  "name": "EDM",
+  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts).",
+  "basic_types": {
+    "0": "Lane Lights Bottom",
+    "1": "Lane Lights Top",
+    "4": "Player Place & Spectrogram"
+  },
+  "channels": {
+    "0": {
+      "groups": [2, 3],
+      "wave": 0.25
+    },
+    "1": {
+      "groups": [0, 1],
+      "wave": 0.125
+    },
+    "2": {
+      "groups": [6, 7, 10, 4],
+      "wave": 0.0
+    },
+    "3": {
+      "groups": [8, 9, 11, 5],
+      "wave": 0.0
+    },
+    "4": {
+      "groups": [],
+      "wave": 0.0
+    }
+  },
+  "spin": {
+    "groups": [12, 13, 14, 15, 16, 17],
+    "axis": 1,
+    "spread": 0.0
+  },
+  "left_sweep": {
+    "groups": [6, 7, 10],
+    "axis": 0,
+    "spread": 12.0
+  },
+  "right_sweep": {
+    "groups": [8, 9, 11],
+    "axis": 0,
+    "spread": 12.0
+  },
+  "groups": {
+    "0": {"name": "Circles Top", "count": 24, "color": true, "rotation": [true, true, false]},
+    "1": {"name": "Circles Close", "count": 24, "color": true, "rotation": [true, true, false]},
+    "2": {"name": "Circles Distant", "count": 24, "color": true, "rotation": [true, true, false]},
+    "3": {"name": "Circles Distant 2", "count": 24, "color": true, "rotation": [true, true, false]},
+    "4": {"name": "Single Source Circles Left", "count": 24, "color": true, "rotation": [true, true, false]},
+    "5": {"name": "Single Source Circles Right", "count": 24, "color": true, "rotation": [true, true, false]},
+    "6": {"name": "Single Source Lasers Left (Up)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "7": {"name": "Single Source Lasers Left (Out)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "8": {"name": "Single Source Lasers Right (Up)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "9": {"name": "Single Source Lasers Right (Out)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "10": {"name": "Single Source Lasers Left (Down)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "11": {"name": "Single Source Lasers Right (Down)", "count": 10, "color": true, "rotation": [true, true, false]},
+    "12": {"name": "Circle Rotations Top", "count": 1, "color": false, "rotation": [true, true, false]},
+    "13": {"name": "Circle Rotations Close", "count": 1, "color": false, "rotation": [true, true, false]},
+    "14": {"name": "Circle Rotations Distant", "count": 1, "color": false, "rotation": [true, true, false]},
+    "15": {"name": "Circle Rotations Distant 2", "count": 1, "color": false, "rotation": [true, true, false]},
+    "16": {"name": "Circle Rotations Single Source Left", "count": 1, "color": false, "rotation": [true, true, false]},
+    "17": {"name": "Circle Rotations Single Source Right", "count": 1, "color": false, "rotation": [true, true, false]}
+  }
+}

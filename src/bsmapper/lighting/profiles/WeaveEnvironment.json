@@ -1,0 +1,63 @@
+{
+  "environment": "WeaveEnvironment",
+  "name": "Weave",
+  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts).",
+  "basic_types": {
+    "4": "Player Place"
+  },
+  "channels": {
+    "0": {
+      "groups": [12, 13, 14, 15],
+      "wave": 0.25
+    },
+    "1": {
+      "groups": [4, 5, 6, 7],
+      "wave": 0.125
+    },
+    "2": {
+      "groups": [0, 2, 8, 10],
+      "wave": 0.0
+    },
+    "3": {
+      "groups": [1, 3, 9, 11],
+      "wave": 0.0
+    },
+    "4": {
+      "groups": [],
+      "wave": 0.0
+    }
+  },
+  "spin": {
+    "groups": [4, 5, 6, 7],
+    "axis": 0,
+    "spread": 20.0
+  },
+  "left_sweep": {
+    "groups": [0, 2, 8, 10],
+    "axis": 1,
+    "spread": 10.0
+  },
+  "right_sweep": {
+    "groups": [1, 3, 9, 11],
+    "axis": 1,
+    "spread": 10.0
+  },
+  "groups": {
+    "0": {"name": "Outer Square Bottom Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "1": {"name": "Outer Square Bottom Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "2": {"name": "Outer Square Top Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "3": {"name": "Outer Square Top Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "4": {"name": "Inner Square Bottom Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "5": {"name": "Inner Square Bottom Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "6": {"name": "Inner Square Top Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "7": {"name": "Inner Square Top Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "8": {"name": "Side Square Bottom Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "9": {"name": "Side Square Bottom Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "10": {"name": "Side Square Top Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "11": {"name": "Side Square Top Right Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "12": {"name": "Distant Square Top Laser", "count": 12, "color": true, "rotation": [true, true, false]},
+    "13": {"name": "Distant Square Bottom Laser", "count": 12, "color": true, "rotation": [true, true, false]},
+    "14": {"name": "Distant Square Left Laser", "count": 8, "color": true, "rotation": [true, true, false]},
+    "15": {"name": "Distant Square Right Laser", "count": 8, "color": true, "rotation": [true, true, false]}
+  }
+}
