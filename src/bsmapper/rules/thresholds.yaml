@@ -1,0 +1,79 @@
+# Playability thresholds for bsmapper.rules.
+#
+# Layers merge in order: default -> difficulties.<Difficulty> -> characteristics.<Characteristic>.
+# Any key may be overridden in any layer. Times are seconds unless named otherwise.
+# Severity: "error" rules are hard constraints (decode masks), "warning" rules are only
+# reported, "off" disables a rule.
+
+default:
+  severity:
+    parity: error
+    swing_interval: error
+    swing_speed: warning
+    same_cell: error
+    overlap: error
+    vision_block: warning
+    crossover: error
+    note_in_wall: error
+    nps_ceiling: error
+    wall_duration: warning
+    dodge_gap: error
+    rotation_whiplash: error
+    rotation_range: error
+  parity:
+    max_wrist_deg: 115
+    inward_bias_deg: 22.5
+    min_direction_change_deg: 60
+    keep_max_turn_deg: 90
+    allow_continuation: true
+    merge_window_s: 0.09
+    slider_max_turn_deg: 45
+    reset_gap_s: 0.6
+    bomb_reset_columns: 1
+    dots_flip_parity: false
+  swing:
+    min_interval_s: 0.08
+    max_speed: 30
+  overlap:
+    min_distance_m: 0.6
+  vision:
+    min_s: 0.05
+    max_s: 0.25
+    bombs_block: true
+  crossover:
+    min_columns: 2
+    window_s: 0.0
+  density:
+    max_nps: 20
+    window_s: 2.0
+  walls:
+    min_duration_s: 0.0138
+    min_dodge_gap_s: 0.15
+    min_dodge_duration_s: 0.1
+  rotation:
+    window_s: 1.0
+    max_swing_deg: 90
+    max_abs_deg: null
+
+difficulties:
+  # Calibrated on 79 human maps: NPS ceilings sit at or above the densest 2 s of those
+  # maps, swing intervals below their fastest same-hand repeats.
+  Easy:
+    density: {max_nps: 6}
+    swing: {min_interval_s: 0.18, max_speed: 10}
+  Normal:
+    density: {max_nps: 7}
+    swing: {min_interval_s: 0.15, max_speed: 14}
+  Hard:
+    density: {max_nps: 10}
+    swing: {min_interval_s: 0.12, max_speed: 18}
+  Expert:
+    density: {max_nps: 14}
+    swing: {min_interval_s: 0.1, max_speed: 24}
+  ExpertPlus:
+    density: {max_nps: 20}
+    swing: {min_interval_s: 0.08, max_speed: 30}
+
+characteristics:
+  90Degree:
+    rotation: {max_abs_deg: 45}

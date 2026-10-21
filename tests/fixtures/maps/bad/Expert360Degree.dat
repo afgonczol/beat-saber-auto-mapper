@@ -1,0 +1,69 @@
+{
+ "version": "3.3.0",
+ "bpmEvents": [],
+ "rotationEvents": [
+  {
+   "b": 4,
+   "e": 0,
+   "r": 60
+  },
+  {
+   "b": 4.5,
+   "e": 0,
+   "r": -60
+  },
+  {
+   "b": 5,
+   "e": 0,
+   "r": -60
+  }
+ ],
+ "colorNotes": [
+  {
+   "b": 2,
+   "x": 1,
+   "y": 0,
+   "c": 0,
+   "d": 1,
+   "a": 0
+  },
+  {
+   "b": 3,
+   "x": 2,
+   "y": 0,
+   "c": 1,
+   "d": 1,
+   "a": 0
+  },
+  {
+   "b": 4,
+   "x": 1,
+   "y": 1,
+   "c": 0,
+   "d": 0,
+   "a": 0
+  },
+  {
+   "b": 5,
+   "x": 2,
+   "y": 1,
+   "c": 1,
+   "d": 0,
+   "a": 0
+  }
+ ],
+ "bombNotes": [],
+ "obstacles": [],
+ "sliders": [],
+ "burstSliders": [],
+ "waypoints": [],
+ "basicBeatmapEvents": [],
+ "colorBoostBeatmapEvents": [],
+ "lightColorEventBoxGroups": [],
+ "lightRotationEventBoxGroups": [],
+ "lightTranslationEventBoxGroups": [],
+ "basicEventTypesWithKeywords": {
+  "d": []
+ },
+ "useNormalEventsAsCompatibleEvents": true
+}
