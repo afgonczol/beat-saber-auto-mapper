@@ -67,7 +67,9 @@ class BuildConfig:
     limit: int | None = None  # only the first N manifest maps
     retry_errors: bool = False  # process maps again whose previous attempt crashed
     pack: bool = True
-    max_tasks_per_child: int = 50
+    # Recycling workers (max_tasks_per_child) deadlocks the pool on CPython 3.12 once the
+    # first batch of workers retires (gh-115634), so it stays off by default.
+    max_tasks_per_child: int | None = None
 
     @property
     def work_dir(self) -> Path:
