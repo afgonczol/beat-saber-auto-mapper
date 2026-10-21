@@ -268,3 +268,380 @@ checkout with BeatLeader ratings on. Both ran until their pool was exhausted.
 90Degree is still small (141 difficulties), and the rare modes lean toward Expert and
 ExpertPlus even more than Standard does. Relaxing the filters further would add few maps
 (see the pool table), so WS6 should rely on oversampling and on the shared model.
+
+## Processed dataset: `bsmapper data build` (WS3b)
+
+```bash
+bsmapper data build --raw data/raw --out data/processed --workers 10
+```
+
+It turns every map in `data/raw/manifest.jsonl` into training data for WS6. Run the same
+command again to resume: a map whose work file exists is not processed again (pass
+`--retry-errors` to retry maps that crashed). `--pack-only` rewrites the shards, the
+manifest and the stats from the work files without touching the audio, so changing a
+filter or the tech-score calibration takes about a minute. `--limit N` and
+`--keys a,b,c` build a subset. `--tracker none` skips the beat tracking, which only
+feeds the grid-drift stat.
+
+### Pipeline
+
+Stage 1 runs per map in `--workers` CPU processes (default: cores − 2):
+
+1. **Read** the zip with `bsmapper.formats.read_map_report`. Maps that need Noodle or
+   Mapping Extensions are rejected (`needs_mods`). Only Standard, OneSaber, 90Degree and
+   360Degree difficulties are kept. Lightshow and NoArrows are skipped (reason
+   `characteristic`). The WS1 reader already drops Lawless and Legacy.
+2. **Audio**: decode the song (`bsmapper.audio.load_audio`) and compute the frame
+   features: 80-band log-mel, onset strength, spectral flux and RMS, at about 100 frames/s.
+3. **Resample onto the map's own grid.** The human map is the ground truth. Feature
+   row `j` is map beat `j / 24` on the map's BPM, BPM changes and `_songTimeOffset`, not
+   on the grid WS2 detects. Rows outside the audio are silence (mel −80 dB, the rest 0).
+   **Phase correction:** some mappers put every note at a constant fraction of a beat off
+   their own grid instead of setting an offset. The builder takes the most common note
+   position modulo half a beat (`audio.benchmark.note_phase`). If removing it moves at
+   least 10 % of the notes onto the 1/24 grid, the whole map (notes and lights) is moved
+   back by that phase. The features are sampled with the same shift, so the notes stay
+   exactly where they were in the audio.
+4. **Snap** with `tokenizer.snap_map`. The off-grid ratio used for filtering is the
+   share of notes and bombs more than 0.1 tick (1/240 beat) from the 1/24 grid, measured
+   before snapping. Walls and arc tails are snapped but not counted.
+5. **Stats** per difficulty: NPS (`tokenizer.notes_per_second`, first to last note),
+   `bsmapper.rules` errors and warnings per 100 notes with per-rule counts, and an
+   onset-alignment check (see [Build stats](#build-stats)).
+6. **Tech features** (`bsmapper.data.tech`) for the style label (next section).
+7. **Tokenize** every difficulty with `MapTokenizer`. The map's richest lightshow (the
+   shared one or a difficulty's own) goes through `prepare_lightshow` and
+   `LightingTokenizer`. All difficulties of a map get the same number of windows: the
+   audio's length in 16-beat windows, or more if objects run past the end of the song.
+8. **Fingerprint** the audio for the song-level split (below).
+
+Stage 2 runs at the same time, in one process on the GPU. It runs the full WS2
+`Analyzer` (beat_this) on each song and saves the *detected* grid for the grid-drift
+stat.
+
+Stage 3 (pack) filters the difficulties, calibrates the tech score, groups the songs,
+splits them and writes the output. Default filters (`bsmapper.data.pack.PackConfig`),
+applied per difficulty:
+
+| Filter | Default | Reason |
+|---|---|---|
+| Notes | ≥ 20 | `too_few_notes` |
+| Notes and bombs > 0.1 tick off the 1/24 grid | ≤ 10 % | `off_grid` |
+| NPS | ≤ 20 | `nps_extreme` |
+| Rule errors per 100 notes | ≤ 10 | `rule_errors` |
+| Objects after the end of the audio | ≤ 1 window | `past_audio_end` |
+
+A map is kept when at least one of its difficulties is kept.
+
+### Style label: the tech score
+
+`tech_features` groups each hand's notes into swings. Notes of one colour within 1/8
+beat of each other are one swing (sliders, stacks). It then measures:
+
+| Feature | Meaning |
+|---|---|
+| `angle_change` | mean of (180° − angle between the previous and this cut) / 180, per hand: 0 for pure down-up flow, 1 for same-direction resets |
+| `reset_rate` | share of consecutive swings that cut within 90° of the previous one |
+| `crossover_rate` | share of swings that land past the other hand's latest swing (within 1 beat) |
+| `dot_ratio` | dot notes / notes |
+| `rhythm_irregularity` | mean absolute log2 of (gap / previous gap) between a hand's swings |
+| `odd_snap_ratio` | share of swings off the 1/4-beat grid (triplets, 1/6, 1/12, …) |
+| `travel` | mean grid distance between a hand's consecutive swings |
+
+Each difficulty (Easy … ExpertPlus, all characteristics pooled) gets its own ridge
+regression on the standardized features. The target is the BeatLeader `techRating`
+standardized within that difficulty, and the fit uses every kept difficulty that has a
+rating (`bsmapper.data.tech.calibrate_by_difficulty`). `tech_score` is the prediction:
+how many standard deviations of techRating the map would sit above its difficulty's
+mean. The pack stage reports each fit's 5-fold cross-validated correlation. One fit per
+difficulty is used because techRating grows with difficulty, so a single pooled fit
+mostly learns which difficulty a map is. `style` is the score's percentile rank within
+its difficulty, so each of `STYLE_0..4` holds about a fifth of every difficulty. Difficulties
+with fewer than 16 notes have no features. They get `style = NaN` and
+`style_bucket = -1`, so use `STYLE_NONE` for them.
+
+### Song-level split
+
+Maps are grouped by song, so all maps of a song land in the same split. Two maps are the
+same song if their **audio fingerprints** match. As the fallback, they are also the same
+song if their normalized title and artist are equal (case-folded, with bracketed parts
+and "feat. …" removed) and their durations differ by at most 3 s. The groups are the
+connected components of both relations.
+
+The fingerprint (`bsmapper.data.songs`) follows Haitsma & Kalker. Each of its 25 words
+per second has 32 bits: the sign of the change in energy difference between neighbouring
+mel bands, smoothed over 80 ms. Exact words that two songs share vote for a time offset
+between them. A pair with at least 8 votes at one offset is confirmed if its bit error
+rate over the aligned overlap is at most 0.3 across at least 20 s. Unrelated audio scores
+about 0.5. This catches re-encodes, re-trims and remasters of the same recording.
+Cut-down "TV size" edits and differently mastered uploads often share too few exact
+words. The title fallback catches most of those.
+
+Each group goes to train, val or test by a hash of its id (the smallest map key in the
+group), about 90 / 5 / 5. The assignment stays the same across rebuilds unless a group
+gains a member.
+
+### Output layout
+
+```
+data/processed/
+  manifest.parquet        one row per kept difficulty: labels, stats, shard pointers
+  difficulties.parquet    every difficulty that was read, kept or not, with the reason
+  maps.parquet            every map, kept or not, with reason, song group, split, grid drift
+  dataset.json            layout, vocab sizes, filters, tech calibration, all build stats
+  features/<split>-NNN.npy    float16 (rows, 83): mel 0..79, onset, flux, rms; memory-mappable
+  tokens/<split>-NNN.parquet  note-token window bodies, one row per kept difficulty
+  lights/<split>-NNN.parquet  lighting-token window bodies, one row per kept map with lights
+  work/maps/<key>.json|.npz   stage 1 output per map (the resume state)
+  work/track/<key>.json       stage 2 detected grid per map
+  build.log
+```
+
+A shard holds up to 64 maps. A map's features are `n_windows * 384` rows starting at
+`feature_row` in `features/<feature_shard>.npy`, so window `k` is rows `k*384` to
+`(k+1)*384` from there. Tokens are stored as window bodies (int16, with int32 window
+offsets). The conditioning prefix and each window's context are rebuilt at load time, so
+training can drop or change NPS and style per sample. Read it with
+`bsmapper.data.ProcessedDataset`:
+
+```python
+from bsmapper.data import ProcessedDataset
+
+ds = ProcessedDataset("data/processed")
+row = ds.rows("train")[0]  # dict: key, characteristic, difficulty, nps, style, ...
+feats = ds.features(row)  # (n_windows * 384, 83) float16 view
+windows = ds.note_windows(row)  # TokenWindows: BOS prefix context SEP body EOS
+no_style = ds.note_windows(row, ds.conditioning(row, style=None))  # STYLE_NONE
+lights = ds.light_windows(row)  # None when the map has no lightshow
+```
+
+Useful manifest columns for WS6: `gold`, `ranked`, `curated`, `nps`, `nps_bucket`,
+`style`, `style_bucket`, `tech_score`, `bl_tech_rating`, `bl_stars`, `flag_*` (the object
+types the map uses), `max_window_tokens`, `rule_errors_per_100`, `note_off_grid_ratio`,
+`onset_best_shift`, `phase` and `bpm_remapped`.
+
+### Format reference (for loaders)
+
+Everything below can be read without bsmapper (numpy + pyarrow). `ProcessedDataset`
+is a thin wrapper over it.
+
+**`dataset.json`**
+
+| Key | Meaning |
+|---|---|
+| `dataset_version`, `builder_version`, `created` | 0, 2, UTC build time of the pack |
+| `ticks_per_beat`, `window_ticks` | 24 and 384 (16 beats) |
+| `feature_dim`, `feature_columns`, `feature_dtype` | 83, `mel_0 … mel_79, onset_strength, spectral_flux, rms`, `float16` |
+| `note_vocab_size`, `light_vocab_size` | 655 and 500 (`tokenizer.NOTE_VOCAB` / `LIGHT_VOCAB`; PAD 0, BOS 1, EOS 2, SEP 3) |
+| `shards` | shard count per split, e.g. `{"train": 35, "val": 3, "test": 2}` |
+| `pack_config` | the filters used (`PackConfig`) |
+| `tech_calibration` | per difficulty: features, mean, std, weights, intercept, n, CV r and Spearman |
+| `stats` | everything in [Build stats](#build-stats), machine-readable |
+
+**`features/<split>-NNN.npy`**: a plain `.npy`, `float16`, shape `(rows, 83)`. Open it
+with `np.load(path, mmap_mode="r")`. The maps of a shard are stored one after another. A
+map's block starts at `feature_row` and is `n_windows * 384` rows long. Row `j` of the
+block is map beat `j / 24` (after the map's `phase` correction), so window `k` is rows
+`k*384 … k*384 + 383`. The mel columns are dB relative to the song's loudest bin
+(−80 … 0). The other three are scaled to the song's maximum (0 … 1). Rows past the end
+of the audio are −80 / 0. The onset column peaks about 1 tick after a hit (12 ms lag).
+
+**`tokens/<split>-NNN.parquet`** (one row per kept difficulty) and
+**`lights/<split>-NNN.parquet`** (one row per kept map with a lightshow):
+
+| Column | Type | Meaning |
+|---|---|---|
+| `key` | string | BeatSaver map key |
+| `characteristic`, `difficulty` | string | tokens tables only |
+| `tokens` | list<int16> | every window's *body* tokens, concatenated (no BOS, prefix, context, SEP or EOS) |
+| `window_offsets` | list<int32> | `n_windows + 1` offsets: window `k` is `tokens[off[k]:off[k+1]]` (it may be empty) |
+
+TIME tokens inside a body are relative to the window's start. To build a model input,
+use `BOS + prefix + context + SEP + body + EOS`. The prefix is
+`Conditioning(...).prefix_ids()` from the manifest row: characteristic, difficulty,
+`nps`, `style`, `flag_*`. The context is `tokenizer.tail_context(previous body,
+grammar, 16)`, empty for window 0. Lighting has no prefix. A manifest row points to its
+token row with `token_shard` + `token_row` (the row index inside that file), and to its
+lights with `light_shard` + `light_row` (`light_shard` is null and `light_row` is −1
+when the map has none). All difficulties of a map share its feature block and its
+lights.
+
+**`manifest.parquet`**: one row per kept difficulty (7526 rows). Columns by group:
+
+| Group | Columns |
+|---|---|
+| identity | `key`, `split` (`train`/`val`/`test`), `song_group`, `characteristic`, `difficulty`, `label` |
+| pointers | `n_windows`, `feature_shard`, `feature_row`, `token_shard`, `token_row`, `light_shard`, `light_row` |
+| conditioning | `nps`, `nps_bucket`, `style` (0..1, NaN = none), `style_bucket` (0..4, −1 = none), `flag_bombs`, `flag_walls`, `flag_arcs`, `flag_chains` |
+| style label | `tech_score` (techRating z units within the difficulty), `tech_<feature>` × 7, `bl_tech_rating`, `bl_stars`, `bl_pass_rating`, `bl_acc_rating`, `bl_status` |
+| weighting | `gold`, `ranked`, `curated`, `uploaded` |
+| content | `notes`, `bombs`, `obstacles`, `arcs`, `chains`, `rotations`, `tokens` (body token count), `max_window_tokens`, `njs`, `njs_offset` |
+| quality | `rule_errors_per_100`, `rule_warnings_per_100`, `rules` (JSON: count per rule), `note_off_grid_ratio`, `snap_off_grid_ratio`, `onset_ratio`, `onset_best_shift`, `onset_best_ratio` |
+| song | `bpm`, `duration_s`, `song_name`, `song_author`, `mapper`, `phase`, `bpm_remapped` |
+
+**`maps.parquet`**: one row per raw map (2712), kept or not: `status` (`kept` or
+`rejected`), `reason`, the song metadata, timing (`bpm`, `bpm_changes`, `bpm_source`,
+`song_time_offset`, `phase`, `n_windows`, `audio_windows`), lights (`light_source`,
+`light_events`, `light_tokens`, `light_chroma`, `light_dropped_box_groups`,
+`light_max_window_tokens`), grid drift (`drift_*`, `detected_bpm`,
+`detected_bpm_changes`, `detected_coverage`, `tracker`) and `song_group`, `split`,
+`feature_shard`, `feature_row`, `feature_rows`.
+
+**`difficulties.parquet`**: one row per difficulty of every map that was read (8735),
+with `kept`, `reason` and the same stats columns as the manifest.
+
+### Build stats
+
+#### Dataset v0 (2026-10-21, 2712 maps)
+
+Command (main checkout, all 2712 maps of the raw manifest):
+`bsmapper data build --raw data/raw --out data/processed --workers 10`
+
+- **Time:** stage 1 ran at about 4.2 maps/s with 10 workers (11 min). Beat tracking ran
+  at about 0.9 maps/s on the RTX 3090 (about 50 min, the bottleneck). The pack took 50 s.
+- **Disk:** features 4.3 GB (float16), note tokens 24 MB, light tokens 27 MB, manifest
+  1.5 MB. The resume state in `work/` is another 4.9 GB and can be deleted once the
+  build is final.
+
+**Maps:** 2448 of 2712 kept.
+
+| Map rejected because | Maps |
+|---|---|
+| needs Noodle or Mapping Extensions (`needs_mods`) | 58 |
+| no difficulty passed the filters (`no_kept_difficulties`) | 205 |
+| no Standard/OneSaber/90Degree/360Degree difficulty (`no_playable_difficulties`) | 1 |
+
+No map failed to read or decode. Of the kept maps, 1580 are gold and 135 are ranked.
+
+**Difficulties:** 7526 kept of the 8735 in the maps that were read.
+
+| Characteristic | Read | Kept | `off_grid` | `rule_errors` | `too_few_notes` | `past_audio_end` |
+|---|---|---|---|---|---|---|
+| Standard | 7191 | 6526 | 604 | 26 | 27 | 8 |
+| OneSaber | 707 | 602 | 92 | 11 | 2 | 0 |
+| 360Degree | 411 | 292 | 75 | 42 | 1 | 1 |
+| 90Degree | 137 | 106 | 23 | 7 | 1 | 0 |
+| Lightshow, NoArrows | 289 | 0 | skipped (`characteristic`) | | | |
+
+`off_grid` is by far the main reason: 9.4 % of playable difficulties have more than 10 %
+of their notes off the 1/24 grid (the median rejected one has 27 %). They come from every
+upload year, but 2020 maps are hit hardest: 26 % of their difficulties, against about 10 %
+for later years. 360Degree loses the most to `rule_errors`, mostly
+`rotation_whiplash`. Among kept difficulties, the median is 0 rule errors per 100 notes,
+the 90th percentile 0.45 and the 99th 4.0.
+
+**Splits** (by song):
+
+| Split | Maps | Songs | Difficulties | 16-beat windows | Note tokens | Maps with lights | Light tokens |
+|---|---|---|---|---|---|---|---|
+| train | 2207 | 2136 | 6824 | 64,547 | 23,429,897 | 2187 | 32,187,726 |
+| val | 133 | 126 | 388 | 4,098 | 1,388,764 | 133 | 1,962,026 |
+| test | 108 | 105 | 314 | 3,095 | 1,094,210 | 106 | 1,593,287 |
+| total | 2448 | 2367 | 7526 | 71,740 | 25,912,871 | 2426 | 35,743,039 |
+
+**Kept difficulties per characteristic and difficulty** (train / val / test, then note
+tokens):
+
+| | Easy | Normal | Hard | Expert | ExpertPlus |
+|---|---|---|---|---|---|
+| Standard | 586 (531/31/24), 1.05 M | 786 (718/39/29), 1.85 M | 1431 (1293/79/59), 4.25 M | 1821 (1648/92/81), 6.76 M | 1902 (1716/103/83), 8.63 M |
+| OneSaber | 33 (32/1/0), 0.05 M | 63 (61/2/0), 0.15 M | 96 (89/3/4), 0.25 M | 163 (148/9/6), 0.55 M | 247 (221/17/9), 0.98 M |
+| 360Degree | 13 (13/0/0), 0.03 M | 14 (14/0/0), 0.03 M | 23 (20/2/1), 0.06 M | 100 (93/3/4), 0.35 M | 142 (129/5/8), 0.59 M |
+| 90Degree | 6 (6/0/0), 0.01 M | 6 (6/0/0), 0.01 M | 21 (19/1/1), 0.05 M | 34 (33/0/1), 0.10 M | 39 (34/1/4), 0.17 M |
+
+The rare modes have almost nothing below Hard, and their val and test sets are tiny
+(0–17 difficulties per cell). Evaluate them on train-split songs held out by key, or
+pool them, rather than trusting those per-cell numbers.
+
+**Tech score calibration** (one fit per difficulty, 5-fold cross-validated, all 7526 kept
+difficulties have a BeatLeader techRating):
+
+| Difficulty | n | Spearman (CV) | Pearson (CV) | Largest weights (z units) | Style vs NPS (Spearman) |
+|---|---|---|---|---|---|
+| Easy | 638 | 0.22 | 0.29 | crossover +0.33, angle change +0.18 | 0.20 |
+| Normal | 869 | 0.30 | 0.29 | crossover +0.26, angle change +0.17 | 0.16 |
+| Hard | 1571 | 0.41 | 0.42 | crossover +0.33, angle change +0.24, travel −0.20 | 0.17 |
+| Expert | 2118 | 0.51 | 0.51 | angle change +0.41, travel −0.39, crossover +0.31 | 0.09 |
+| ExpertPlus | 2330 | 0.58 | 0.57 | angle change +0.50, rhythm irregularity −0.31, travel −0.31 | 0.07 |
+
+- The heuristic agrees reasonably with techRating where it matters most (Hard to
+  ExpertPlus). It agrees weakly on Easy and Normal, where BeatLeader's techRating mostly
+  follows density (Spearman 0.70 with NPS on Easy). Easy is low priority anyway.
+- Agreement by characteristic, as the mean within-difficulty Spearman (in-sample):
+  Standard 0.45, 90Degree 0.45, OneSaber 0.37, 360Degree 0.25. For 360Degree, treat
+  the style label as noisy.
+- **Style stays close to independent of density** within a difficulty (last column), so
+  the `STYLE` and `NPS` tokens carry different information. Adding NPS as a feature
+  would raise the agreement (Standard ExpertPlus to about 0.7). It is left out on purpose, because the
+  slider should not just be a second density knob.
+- A single fit over all difficulties reached r = 0.56, but mostly by learning the
+  difficulty: within a difficulty it agreed much less (ExpertPlus 0.36, Expert 0.29). That is why there is
+  one fit per difficulty.
+- Each `STYLE_k` bucket holds a fifth of each difficulty (for example Expert: 423–424 per
+  bucket).
+
+**Grid drift** (WS2's detected grid against the map's own grid, 2448 kept maps, all
+tracked with beat_this):
+
+| Detected tempo vs map | Maps |
+|---|---|
+| same | 1902 |
+| half (the map uses double the BPM) | 436 |
+| double | 47 |
+| 2/3 or 3/2 | 10 |
+| other | 53 |
+
+**Half and double time** are not errors. Mappers often set double the song's BPM, for
+1/8 precision in their editor, and the tracker then finds every other map beat (436
+"half" maps). Sometimes the tracker counts eighth notes instead (47 "double" maps).
+Training is not affected: features, tokens and windows always follow the map's own BPM,
+never the detected one. For the drift stat, a double-time detection is scored modulo
+half a map beat, since each detected beat should still land on a half-beat of the map.
+A half-time detection is scored modulo a whole map beat. The "other" maps (53, tempo
+ratios such as 0.75 or 1.33) and the 2/3 and 3/2 maps (10) are left out of the error
+table below. For WS7 this means a detected BPM is only right up to a factor of 2. The
+generator has to pick the tempo octave itself, for example from the target NPS.
+
+Of the 2385 maps at the same, half or double tempo, the median |error| of the detected
+beats on the map's grid is:
+
+| Median error per map | Maps |
+|---|---|
+| ≤ 1 tick | 2033 (85 %) |
+| 1–3 ticks | 111 |
+| 3–9 ticks | 70 |
+| about half a beat (> 9 ticks) | 171 (7 %) |
+
+Quantiles over those maps (5/25/50/75/95 %): median |error| 0.02 / 0.11 / 0.23 / 0.52 /
+11.4 ticks; per-map p95 |error| 0.02 / 0.12 / 0.37 / 0.89 / 11.7 ticks. 1889 maps have
+90 % of their detected beats within 1 tick. The half-beat cases put the detected beat on
+the map's off-beat. WS7 should check the phase against onsets (or offer a half-beat
+shift) before it trusts the detected grid. The fit coverage quantiles are 0.67 / 0.88 /
+0.97 / 0.995 / 1.0, and 161 maps are below the 0.7 low-confidence line.
+
+**Timing:**
+- 227 maps were phase-corrected (notes at a constant offset from the map's grid).
+- 372 maps have BPM changes.
+- 46 maps have difficulties whose BPM events disagree; WS1 remapped them onto one
+  tempo map (`bpm_remapped`). Their times in seconds are right, but one difficulty can
+  end up off the musical 1/4 grid by a constant amount.
+- 2 maps have a nonzero `_songTimeOffset`.
+- Song length quantiles (5/25/50/75/95 %): 91 / 158 / 192 / 221 / 272 s.
+
+**Onset alignment:** within each difficulty, the onset strength at the note ticks peaks
+at a shift of 0 to +2 ticks for 96 % of difficulties (+1 tick for 75 %, matching the
+onset feature's 12 ms lag). 2 % peak about half a beat away. These are mostly
+syncopated maps (notes on the off-beats) and are kept. The peak onset ratio (at note
+ticks over the song mean) has quantiles 2.4 / 3.3 / 4.1 / 5.0 / 6.8. Nothing is
+filtered on this; the columns are in the manifest.
+
+**Tokens per window:** note bodies have 186 tokens at the median window maximum per
+difficulty, and 390 at the 95th percentile. Lightshows are much denser. 2426 maps have
+one, 440 of them with Chroma colours. 216 maps had v3 event box groups that the lighting
+vocabulary drops. Light tokens per map have quantiles 420 / 3485 / 6453 / 12403 / 57019.
+The longest window per map is 56 / 239 / 431 / 827 / 4282 tokens. WS6 will have to cap
+or subsample the densest lightshows (the gold subset is the intended lighting training
+set anyway).
+
+**Songs:** 2367 song groups. 75 groups hold more than one map. The fingerprint made 69
+links and the title/artist/duration fallback 12 more.

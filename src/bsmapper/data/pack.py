@@ -31,7 +31,12 @@ import numpy as np
 from bsmapper.data.build import BUILDER_VERSION, MAPS_DIR, TRACK_DIR, WORK_DIR, read_json
 from bsmapper.data.mapgrid import FEATURE_COLUMNS, FEATURE_DIM, N_MELS, MapTiming, grid_drift
 from bsmapper.data.songs import SPLITS, group_songs, split_for
-from bsmapper.data.tech import FEATURES, TechCalibration, feature_matrix, style_by_difficulty
+from bsmapper.data.tech import (
+    FEATURES,
+    calibrate_by_difficulty,
+    feature_matrix,
+    style_by_difficulty,
+)
 
 log = logging.getLogger(__name__)
 
@@ -172,6 +177,7 @@ def pack(
                 **{k: d[k] for k in ("label", "njs", "njs_offset", "notes", "bombs",
                                      "obstacles", "arcs", "chains", "rotations", "nps",
                                      "note_off_grid_ratio", "snap_off_grid_ratio",
+                                     "onset_ratio", "onset_best_shift", "onset_best_ratio",
                                      "rule_errors_per_100", "rule_warnings_per_100", "tokens")},
                 **{f"flag_{k}": v for k, v in d["flags"].items()},
                 **{f"tech_{f}": (d["tech"] or {}).get(f, float("nan")) for f in FEATURES},
@@ -241,13 +247,9 @@ def pack(
     )  # fmt: skip
     y = np.array([np.nan if r["bl_tech_rating"] is None else r["bl_tech_rating"]
                   for r in kept_rows], dtype=np.float64)  # fmt: skip
-    try:
-        cal = TechCalibration.fit(x, y, alpha=cfg.tech_ridge_alpha)
-    except ValueError as e:  # too few BeatLeader ratings (e.g. the test fixtures)
-        log.warning("tech score not calibrated: %s", e)
-        cal = TechCalibration.uncalibrated(x)
-    score = cal.predict(x)
-    style = style_by_difficulty(score, [r["difficulty"] for r in kept_rows])
+    diffs = [r["difficulty"] for r in kept_rows]
+    score, cals = calibrate_by_difficulty(x, y, diffs, alpha=cfg.tech_ridge_alpha)
+    style = style_by_difficulty(score, diffs)
     for r, s, st in zip(kept_rows, score, style, strict=True):
         r["tech_score"] = float(s)
         r["style"] = float(st)
@@ -337,7 +339,7 @@ def pack(
 
     from bsmapper.data.stats import build_stats
 
-    stats = build_stats(map_rows, diff_rows, manifest_rows, cal, groups)
+    stats = build_stats(map_rows, diff_rows, manifest_rows, cals, groups)
     meta = {
         "dataset_version": DATASET_VERSION,
         "builder_version": BUILDER_VERSION,
@@ -352,7 +354,7 @@ def pack(
         "light_vocab_size": _vocab_size("LIGHT_VOCAB"),
         "shards": dict(shard_counts),
         "pack_config": asdict(cfg),
-        "tech_calibration": cal.to_dict(),
+        "tech_calibration": {d: c.to_dict() for d, c in cals.items()},
         "stats": stats,
     }
     (out_dir / "dataset.json").write_text(json.dumps(meta, indent=1, default=_json_default))

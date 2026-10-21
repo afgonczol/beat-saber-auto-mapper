@@ -34,10 +34,11 @@ def summary_lines(stats: dict[str, Any]) -> list[str]:
             f"  {split}: {s['maps']} maps, {s['songs']} songs, {s['difficulties']} difficulties, "
             f"{s['note_tokens']:,} note tokens, {s['light_tokens']:,} light tokens"
         )
-    cal = stats["tech"]["calibration"]
+    cals = stats["tech"]["calibration"]
     lines.append(
-        f"Tech score vs BeatLeader techRating: n={cal['n']}, cross-validated "
-        f"r={cal['r_cv']:.3f}, Spearman={cal['spearman_cv']:.3f}"
+        "Tech score vs BeatLeader techRating within each difficulty (cross-validated "
+        "Spearman): "
+        + ", ".join(f"{d} {c['spearman_cv']:.2f} (n={c['n']})" for d, c in cals.items())
     )
     g = stats["grid_drift"]
     if g.get("maps"):
@@ -52,7 +53,7 @@ def build_stats(
     map_rows: list[dict[str, Any]],
     diff_rows: list[dict[str, Any]],
     manifest_rows: list[dict[str, Any]],
-    cal: TechCalibration,
+    cals: dict[str, TechCalibration],
     groups: SongGroups,
 ) -> dict[str, Any]:
     kept_maps = [m for m in map_rows if m["status"] == "kept"]
@@ -108,39 +109,43 @@ def build_stats(
 
     # --- tech score
     rated = [r for r in manifest_rows if r.get("bl_tech_rating") is not None]
-    tech = {
-        "calibration": cal.to_dict(),
+    tech: dict[str, Any] = {
+        "calibration": {d: cals[d].to_dict() for d in DIFFS if d in cals},
         "rated_difficulties": len(rated),
         "difficulties_without_features": sum(
             1 for r in manifest_rows if not np.isfinite(r["tech_score"])
         ),
     }
     if rated:
-        s = np.array([r["tech_score"] for r in rated])
         t = np.array([r["bl_tech_rating"] for r in rated])
         n = np.array([r["nps"] for r in rated])
-        ok = np.isfinite(s)
-        tech["pearson_train"] = pearson(s[ok], t[ok])
-        tech["spearman_train"] = spearman(s[ok], t[ok])
         tech["bl_tech_vs_nps_pearson"] = pearson(t, n)
-        tech["tech_score_vs_nps_pearson"] = pearson(s[ok], n[ok])
         per_diff = {}
         for d in DIFFS:
-            idx = [i for i, r in enumerate(rated) if r["difficulty"] == d and ok[i]]
-            if len(idx) >= 10:
+            sub = [r for r in rated if r["difficulty"] == d and np.isfinite(r["tech_score"])]
+            if len(sub) >= 10:
+                s_, t_, n_ = (np.array([r[k] for r in sub]) for k in ("tech_score",
+                              "bl_tech_rating", "nps"))  # fmt: skip
                 per_diff[d] = {
-                    "n": len(idx),
-                    "spearman": spearman(s[idx], t[idx]),
-                    "style_vs_nps_spearman": spearman(
-                        np.array([rated[i]["style"] for i in idx]), n[idx]
-                    ),
+                    "n": len(sub),
+                    "spearman_train": spearman(s_, t_),
+                    "bl_tech_vs_nps_spearman": spearman(t_, n_),
+                    "style_vs_nps_spearman": spearman(np.array([r["style"] for r in sub]), n_),
                 }
         tech["by_difficulty"] = per_diff
+        # Within-difficulty agreement per characteristic: mean over difficulties with >= 10.
         per_char = {}
         for c in CHARS:
-            idx = [i for i, r in enumerate(rated) if r["characteristic"] == c and ok[i]]
-            if len(idx) >= 10:
-                per_char[c] = {"n": len(idx), "spearman": spearman(s[idx], t[idx])}
+            vals, total = [], 0
+            for d in DIFFS:
+                sub = [r for r in rated if r["characteristic"] == c and r["difficulty"] == d
+                       and np.isfinite(r["tech_score"])]  # fmt: skip
+                if len(sub) >= 10:
+                    vals.append(spearman(np.array([r["tech_score"] for r in sub]),
+                                         np.array([r["bl_tech_rating"] for r in sub])))  # fmt: skip
+                    total += len(sub)
+            if vals:
+                per_char[c] = {"n": total, "mean_within_difficulty_spearman": float(np.mean(vals))}
         tech["by_characteristic"] = per_char
     tech["feature_quantiles"] = {f: _q([r[f"tech_{f}"] for r in manifest_rows]) for f in FEATURES}
     stats["tech"] = tech
@@ -176,6 +181,14 @@ def build_stats(
         "maps_with_dropped_box_groups": sum(m["light_dropped_box_groups"] > 0 for m in lit),
         "tokens_per_map_quantiles": _q([m["light_tokens"] for m in lit]),
         "max_window_tokens_quantiles": _q([m.get("light_max_window_tokens", 0) for m in lit]),
+    }
+    shifts = Counter(r["onset_best_shift"] for r in manifest_rows)
+    stats["onset_alignment"] = {
+        "best_shift_ticks": dict(sorted(shifts.items())),
+        "share_best_shift_0_to_2": sum(shifts[k] for k in (0, 1, 2)) / max(len(manifest_rows), 1),
+        "share_best_shift_half_beat": sum(v for k, v in shifts.items() if abs(k) >= 10)
+        / max(len(manifest_rows), 1),
+        "best_ratio_quantiles": _q([r["onset_best_ratio"] for r in manifest_rows]),
     }
     stats["note_tokens"] = {
         "per_difficulty_quantiles": _q([r["tokens"] for r in manifest_rows]),

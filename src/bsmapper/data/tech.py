@@ -18,9 +18,10 @@ notes) are one swing. The features are:
   (triplets, 1/6, 1/12 ...).
 - ``travel``: mean grid distance between a hand's consecutive swings.
 
-``TechCalibration`` fits these against BeatLeader's ``techRating`` (ridge
-regression on standardized features), which turns them into one ``tech_score`` on
-the techRating scale. ``style_by_difficulty`` then ranks the scores within each
+``calibrate_by_difficulty`` fits them against BeatLeader's ``techRating`` with one
+ridge regression (``TechCalibration``) per difficulty, which turns them into one
+``tech_score``: how many standard deviations of techRating a map would sit above its
+difficulty's mean. ``style_by_difficulty`` then ranks the scores within each
 difficulty into 0..1, so every difficulty uses the whole slider.
 """
 
@@ -229,6 +230,37 @@ class TechCalibration:
             "spearman_cv": self.spearman_cv,
             "feature_r": self.feature_r,
         }
+
+
+def calibrate_by_difficulty(
+    x: np.ndarray, rating: np.ndarray, difficulties: Sequence[str], alpha: float = 1.0
+) -> tuple[np.ndarray, dict[str, TechCalibration]]:
+    """One fit per difficulty against the techRating standardized within that difficulty.
+
+    BeatLeader's techRating grows with difficulty (and with density), so a single fit
+    over all difficulties mostly learns which difficulty a map is. The style slider
+    only compares maps of one difficulty, so each difficulty gets its own fit and the
+    target is "standard deviations above this difficulty's mean techRating". A
+    difficulty with fewer than 10 rated maps falls back to equal weights.
+    Returns the scores (in those units) and the fit per difficulty.
+    """
+    diffs = np.asarray(difficulties)
+    scores = np.full(len(diffs), np.nan)
+    cals: dict[str, TechCalibration] = {}
+    for d in np.unique(diffs):
+        idx = np.flatnonzero(diffs == d)
+        y = rating[idx]
+        rated = np.isfinite(y)
+        z = np.full(len(idx), np.nan)
+        if rated.sum() > 1 and np.std(y[rated]) > 0:
+            z[rated] = (y[rated] - y[rated].mean()) / y[rated].std()
+        try:
+            cal = TechCalibration.fit(x[idx], z, alpha=alpha)
+        except ValueError:
+            cal = TechCalibration.uncalibrated(x[idx])
+        cals[str(d)] = cal
+        scores[idx] = cal.predict(x[idx])
+    return scores, cals
 
 
 def style_by_difficulty(scores: np.ndarray, difficulties: Sequence[str]) -> np.ndarray:

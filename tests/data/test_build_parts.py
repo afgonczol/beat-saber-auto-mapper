@@ -28,6 +28,7 @@ from bsmapper.data.songs import (
 from bsmapper.data.tech import (
     FEATURES,
     TechCalibration,
+    calibrate_by_difficulty,
     feature_matrix,
     spearman,
     style_by_difficulty,
@@ -165,6 +166,24 @@ def test_calibration_recovers_a_linear_label():
     unc = TechCalibration.uncalibrated(x)
     assert spearman(unc.predict(x), x.mean(axis=1) / x.std(axis=0).mean()) > 0.9
     assert feature_matrix([None, dict.fromkeys(FEATURES, 1.0)]).shape == (2, len(FEATURES))
+
+
+def test_calibration_per_difficulty_ignores_the_rating_offset_between_difficulties():
+    rng = np.random.default_rng(2)
+    x = rng.uniform(0, 1, (400, len(FEATURES)))
+    diffs = np.array(["Expert"] * 200 + ["Easy"] * 200)
+    # Easy ratings are much lower, and a different feature drives them.
+    rating = np.where(diffs == "Expert", 5 + 2 * x[:, 0], 1 + 0.5 * x[:, 2])
+    rating = rating + rng.normal(0, 0.02, 400)
+    scores, cals = calibrate_by_difficulty(x, rating, diffs)
+    assert set(cals) == {"Expert", "Easy"}
+    for d, f in (("Expert", 0), ("Easy", 2)):
+        m = diffs == d
+        assert cals[d].spearman_cv > 0.95
+        assert int(np.argmax(cals[d].weights)) == f
+        assert abs(scores[m].mean()) < 0.1  # z units within the difficulty
+    few, cals = calibrate_by_difficulty(x[:5], rating[:5], diffs[:5])
+    assert cals["Expert"].n == 0 and np.isfinite(few).all()  # equal-weight fallback
 
 
 def test_style_is_a_rank_within_each_difficulty():
