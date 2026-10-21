@@ -243,3 +243,70 @@ def test_light_beatmap_sets_environment_and_lightshow(analysis, style, environme
     assert beatmap.environment == environment
     assert bool(beatmap.lightshow.event_box_groups) == (style == "v3")
     assert beatmap.lightshow.uses_chroma == (style == "chroma")
+
+
+# --- rotations never park lights across the track (playtest regression) -----------
+
+
+def _rotation_timeline(ls, gid):
+    groups = sorted(
+        (g for g in ls.event_box_groups if g.kind == "rotation" and g.group_id == gid),
+        key=lambda g: g.beat,
+    )
+    return [(g.beat, g.beat + g.boxes[0]["l"][-1]["b"], g.boxes[0]) for g in groups]
+
+
+def _offset(angle: float, rest: float) -> float:
+    d = (angle - rest) % 360.0
+    return min(d, 360.0 - d)
+
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+@pytest.mark.parametrize(
+    "sections",
+    [
+        None,  # the default synthetic song
+        # A long boosted high section, like the playtested song (80 beats of drop).
+        [("intro", 0.0, 20.0, 0.4), ("drop", 20.0, 60.0, 1.0), ("verse", 60.0, 64.0, 0.6)],
+    ],
+)
+def test_rotations_return_to_rest(beatmap, environment, sections):
+    from synthetic import SECTIONS, make_analysis
+
+    profile = get_profile(environment)
+    plan = rule_lightshow(make_analysis(sections or SECTIONS), beatmap)
+    ls = render_v3(plan.lightshow, profile)
+    motions = [profile.spin, profile.left_sweep, profile.right_sweep]
+    for motion in motions:
+        for gid in motion.groups:
+            timeline = _rotation_timeline(ls, gid)
+            assert timeline
+            for (start, end, box), nxt in zip(timeline, [*timeline[1:], None], strict=True):
+                final = box["l"][-1]["r"]
+                at_rest = _offset(final, motion.rest) < 1e-6 and box["s"] == 0
+                if not at_rest:
+                    # Off the rest pose only while moving: the next move starts on time.
+                    assert nxt is not None and nxt[0] <= end + 1e-6, (environment, gid, start)
+                    assert _offset(final, motion.rest) <= motion.max_angle + 1e-6
+            last = timeline[-1][2]
+            assert _offset(last["l"][-1]["r"], motion.rest) < 1e-6 and last["s"] == 0
+
+
+def test_spins_turn_a_full_circle_back_to_rest(analysis, beatmap):
+    profile = get_profile("WeaveEnvironment")
+    ls = render_v3(rule_lightshow(analysis, beatmap).lightshow, profile)
+    timeline = _rotation_timeline(ls, profile.spin.groups[0])
+    spins = [(s, box) for s, _, box in timeline if box["l"][-1]["l"] == 1]
+    assert [s for s, _ in spins] == [0, 32, 64, 96]
+    for start, box in spins:
+        assert box["l"][-1]["r"] == profile.spin.rest
+        settle = next(b for s, _, b in timeline if s == start + 2.0)
+        assert settle["s"] == 0 and settle["l"][-1]["r"] == profile.spin.rest
+
+
+def test_sweep_amplitude_is_capped():
+    from bsmapper.lighting.render import sweep_amplitude
+
+    assert sweep_amplitude(1) == 13
+    assert sweep_amplitude(7) == 30
+    assert sweep_amplitude(7, max_angle=20) == 20

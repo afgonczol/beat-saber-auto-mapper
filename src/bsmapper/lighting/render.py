@@ -51,9 +51,12 @@ def render_vanilla(lightshow: Lightshow) -> Lightshow:
 FLASH_PEAK = 1.2  # brightness multiplier at the start of a flash or fade
 FLASH_DECAY = 0.25  # beats for a flash to settle
 FADE_OUT = 1.0  # beats for a fade to reach black
-SPIN_BEATS = 2.0
-ZOOM_BEATS = 1.0
-SPIN_ANGLES = (45.0, 0.0, 90.0, 0.0)
+# Rotations always come back to the motion's rest pose (by default the environment's own
+# pose: angle 0, no spread). Lights parked at other angles can sit across the track and
+# hide the notes, which a playtest on Weave showed.
+SPIN_BEATS = 2.0  # one full turn, back to rest
+ZOOM_BEATS = 1.0  # fan out and back
+SETTLE_BEATS = 1.0  # glide back to the rest pose after a move
 ZOOM_SPREAD_FACTOR = 3.0
 EASE_IN_OUT_QUAD = 3
 EASE_NONE = -1
@@ -140,6 +143,11 @@ def _turn(duration: float, angle: float, loops: int = 0, direction: int = 0) -> 
     ]
 
 
+def rest_box(motion: Motion, duration: float, mirror: bool = False) -> dict[str, Any]:
+    """Glide every light of the group back to the rest pose (no spread)."""
+    return rotation_box(motion, _turn(duration, motion.rest), 0.0, mirror)
+
+
 class _Groups:
     """Collects boxes into one EventBoxGroup per (beat, kind, group id)."""
 
@@ -157,56 +165,70 @@ class _Groups:
 
 
 def _spins(events: list[BasicEvent], motion: Motion, zoom_native: bool, out: _Groups) -> None:
-    """Ring spins turn the spin groups; ring zooms fan their lights out and back."""
-    beats = sorted(
-        {e.beat for e in events if e.type == RING_SPIN or (e.type == RING_ZOOM and not zoom_native)}
-    )
+    """Ring spins turn the spin groups one full turn; ring zooms fan their lights out.
+
+    Both end back in the rest pose, so no light is left parked across the track.
+    """
     spin_beats = {e.beat for e in events if e.type == RING_SPIN}
-    angle, spread, n_spins = 0.0, motion.spread, 0
-    for beat in beats:
-        zoom = any(e.beat == beat and e.type == RING_ZOOM for e in events) and not zoom_native
-        if zoom:
-            wide = motion.spread * ZOOM_SPREAD_FACTOR or 45.0
-            spread = motion.spread if spread != motion.spread else wide
+    zoom_beats = set() if zoom_native else {e.beat for e in events if e.type == RING_ZOOM}
+    beats = sorted(spin_beats | zoom_beats)
+    wide = motion.spread * ZOOM_SPREAD_FACTOR or 45.0
+    n_spins = 0
+    for i, beat in enumerate(beats):
+        gap = beats[i + 1] - beat if i + 1 < len(beats) else float("inf")
+        spread = wide if beat in zoom_beats else motion.spread
         if beat in spin_beats:
-            angle = SPIN_ANGLES[n_spins % len(SPIN_ANGLES)]
+            move = min(SPIN_BEATS, gap / 2)
             direction = 1 + n_spins % 2  # alternate clockwise / counter-clockwise
-            rot = _turn(SPIN_BEATS, angle, loops=1, direction=direction)
+            rot = _turn(move, motion.rest, loops=1, direction=direction)
             n_spins += 1
         else:
-            rot = _turn(ZOOM_BEATS, angle)
+            move = min(ZOOM_BEATS / 2, gap / 2)
+            rot = _turn(move, motion.rest)
+        settle = min(SETTLE_BEATS, gap - move)
         for gid in motion.groups:
             out.add(beat, "rotation", gid, rotation_box(motion, rot, spread))
+            if settle > 0:
+                out.add(beat + move, "rotation", gid, rest_box(motion, settle))
 
 
 def sweep_period(speed: int) -> float:
     return 4.0 if speed <= 2 else 2.0 if speed <= 5 else 1.0
 
 
-def sweep_amplitude(speed: int) -> float:
-    return min(15.0 + 5.0 * speed, 60.0)
+def sweep_amplitude(speed: int, max_angle: float = 30.0) -> float:
+    """Swing either side of the rest pose, in degrees; capped by the profile's max_angle."""
+    return min(10.0 + 3.0 * speed, max_angle)
 
 
 def _sweeps(
     events: list[BasicEvent], type_: int, motion: Motion, mirror: bool, end: float, out: _Groups
 ) -> None:
-    """Laser speed events become back-and-forth sweeps on the sweep groups."""
+    """Laser speed events become back-and-forth sweeps around the rest pose.
+
+    Speed 0 glides back to rest; so does the end of the last sweep.
+    """
     speeds = sorted((e for e in events if e.type == type_), key=lambda e: e.beat)
     for i, event in enumerate(speeds):
-        stop = speeds[i + 1].beat if i + 1 < len(speeds) else end
+        last = i + 1 == len(speeds)
+        stop = end if last else speeds[i + 1].beat
         if event.value <= 0:
-            steps = [(event.beat, _turn(1.0, 0.0))]
-        else:
-            period, amp = sweep_period(event.value), sweep_amplitude(event.value)
-            steps = []
-            beat, k = event.beat, 0
-            while beat < stop - 1e-9:
-                angle = amp if k % 2 == 0 else 360.0 - amp  # automatic direction swings via 0
-                steps.append((beat, _turn(min(period, stop - beat), angle)))
-                beat, k = beat + period, k + 1
-        for beat, rot in steps:
+            for gid in motion.groups:
+                out.add(event.beat, "rotation", gid, rest_box(motion, SETTLE_BEATS, mirror))
+            continue
+        period = sweep_period(event.value)
+        amp = sweep_amplitude(event.value, motion.max_angle)
+        beat, k = event.beat, 0
+        while beat < stop - 1e-9:
+            # Automatic direction takes the short way, so the swing passes through rest.
+            angle = (motion.rest + (amp if k % 2 == 0 else -amp)) % 360.0
+            rot = _turn(min(period, stop - beat), angle)
             for gid in motion.groups:
                 out.add(beat, "rotation", gid, rotation_box(motion, rot, motion.spread, mirror))
+            beat, k = beat + period, k + 1
+        if last:
+            for gid in motion.groups:
+                out.add(stop, "rotation", gid, rest_box(motion, SETTLE_BEATS, mirror))
 
 
 def render_v3(lightshow: Lightshow, profile: EnvironmentProfile) -> Lightshow:
