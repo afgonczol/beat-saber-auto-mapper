@@ -1,0 +1,57 @@
+# First full run on dataset v0 (data/processed), RTX 3090 24 GB, bf16.
+#   bsmapper train configs/note_v0.yaml        (resumes from run.out_dir/last.pt)
+# Notes + lights in one model: ~89M parameters (encoder 21M, note decoder 35M,
+# note memory 7M, light decoder 26M). See docs/MODEL.md for the expected time and VRAM.
+model:
+  d_model: 512
+  n_heads: 8
+  ff_mult: 4
+  dropout: 0.1
+  encoder_layers: 6
+  decoder_layers: 8
+  max_len: 1536
+  light_layers: 6
+  light_max_len: 1536
+  note_memory_layers: 2
+  note_memory_len: 512
+  grad_checkpointing: false
+data:
+  root: data/processed
+  context_events: 16
+  max_note_tokens: 1024     # > 99.9% of v0 windows fit; longer ones are cropped
+  max_light_tokens: 1024
+  max_light_body: 1024      # skips ~5% of light windows (lightID / Chroma spam)
+  note_memory_tokens: 512
+  style_dropout: 0.2
+  nps_dropout: 0.1
+  context_dropout: 0.05
+  characteristic_weights: {Standard: 1.0, OneSaber: 2.0, 90Degree: 4.0, 360Degree: 3.0}
+  difficulty_weights: {Easy: 1.0, Normal: 1.0, Hard: 1.0, Expert: 1.0, ExpertPlus: 1.0}
+  oversample_easy: false
+  gold_weight: 1.5
+  empty_window_weight: 0.25
+  lights_gold_only: true
+  num_workers: 4
+optim:
+  lr: 3.0e-4
+  min_lr_ratio: 0.1
+  betas: [0.9, 0.98]
+  weight_decay: 0.05
+  warmup_steps: 2000
+  max_steps: 60000
+  grad_clip: 1.0
+  label_smoothing: 0.1
+  batch_size: 32
+  grad_accum: 1
+  light_batch_size: 16
+  light_loss_weight: 0.5
+run:
+  out_dir: checkpoints/note_v0
+  device: cuda
+  precision: bf16
+  seed: 0
+  log_every: 100
+  eval_every: 2000
+  eval_batches: 50
+  save_every: 2000
+  keep_checkpoints: 3
