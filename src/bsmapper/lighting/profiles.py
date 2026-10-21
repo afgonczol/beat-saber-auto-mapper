@@ -9,6 +9,8 @@ onto them:
   the group's lights;
 - ``spin``: groups that turn on ring spins (type 8) and fan out on ring zooms (type 9);
 - ``left_sweep`` / ``right_sweep``: groups that sweep with the laser speed (types 12/13);
+  every motion may set ``rest`` (the angle moves return to, default 0 = the environment's
+  own pose) and ``max_angle`` (how far sweeps swing either side of rest, default 30);
 - ``basic_types``: basic event types the environment still reacts to; these are passed
   through unchanged (boost always is).
 
@@ -44,6 +46,8 @@ class Motion:
     groups: tuple[int, ...]
     axis: int  # 0 = x, 1 = y, 2 = z
     spread: float = 0.0  # degrees between the first and last light
+    rest: float = 0.0  # angle every move returns to; 0 is the environment's own pose
+    max_angle: float = 30.0  # sweeps swing at most this far either side of rest
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +78,8 @@ class EnvironmentProfile:
         ):
             if motion is None:
                 continue
+            if not 0 < motion.max_angle <= 90:
+                problems.append(f"{label}: max_angle {motion.max_angle} is not in (0, 90]")
             if not 0 <= motion.axis <= 2:
                 problems.append(f"{label}: axis {motion.axis} is not 0..2")
                 continue
@@ -89,7 +95,13 @@ class EnvironmentProfile:
 def _motion(raw: Any) -> Motion | None:
     if not raw:
         return None
-    return Motion(tuple(raw["groups"]), int(raw["axis"]), float(raw.get("spread", 0.0)))
+    return Motion(
+        tuple(raw["groups"]),
+        int(raw["axis"]),
+        float(raw.get("spread", 0.0)),
+        float(raw.get("rest", 0.0)),
+        float(raw.get("max_angle", 30.0)),
+    )
 
 
 def parse_profile(data: dict[str, Any]) -> EnvironmentProfile:

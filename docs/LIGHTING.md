@@ -65,13 +65,20 @@ pick a suitable environment instead.
   - *Fade*: an instant event at 1.2× brightness that fades to black over 1 beat.
   - *Transition*: a transition event.
   - A per-channel `wave` (beat distribution) ripples a hit across the group's lights.
-- **Ring spin** (type 8) rotates the spin groups by one extra full turn to the next angle.
-  The direction alternates between spins.
-- **Ring zoom** (type 9) fans the spin groups' rotation distribution out and back. If an
-  environment handles type 9 natively (The Second), the zoom event is passed through
-  instead.
-- **Laser speed** (types 12 and 13) becomes back-and-forth sweeps on the sweep groups.
-  Faster speeds give a shorter period and a wider swing. The right side is mirrored.
+- **Ring spin** (type 8) turns the spin groups one full circle over 2 beats, then glides
+  them back to the rest pose. The direction alternates between spins.
+- **Ring zoom** (type 9) briefly fans the spin groups' lights out (3× the spread), then
+  glides them back to rest. If an environment handles type 9 natively (The Second), the
+  zoom event is passed through instead.
+- **Laser speed** (types 12 and 13) becomes back-and-forth sweeps around the rest pose on
+  the sweep groups. Faster speeds give a shorter period and a wider swing, capped at the
+  motion's `max_angle` (30° by default). Speed 0 glides back to rest. The right side is
+  mirrored.
+- **Rest pose.** Rotated lights are never left parked: every move ends back at the motion's
+  `rest` angle (by default 0, the environment's own pose) with no spread, or hands over
+  directly to the next move. In a playtest on Weave, spins parked the inner square at
+  45°/90°, and a zoom left it fanned 60° for a whole 80-beat drop. Those lights sat across
+  the track and hid the notes.
 
 ### Environment profiles
 
@@ -82,7 +89,8 @@ environment, add a file; no code changes are needed.
   These come from KivalEvan/BeatSaber-JSMap.
 - `channels`: vanilla light type → the colour groups that play it, plus `wave` (beats).
 - `spin`, `left_sweep`, `right_sweep`: the groups to rotate, the `axis` (0 = x, 1 = y,
-  2 = z) and the `spread` (degrees from the first light to the last).
+  2 = z) and the `spread` (degrees from the first light to the last). Optional: `rest`
+  (default 0) and `max_angle` (default 30) to tune a motion after a playtest.
 - `basic_types`: basic event types the environment still reacts to. They are passed
   through unchanged.
 
