@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -164,9 +165,43 @@ def data_build(raw: Path = Path("data/raw"), out: Path = Path("data/processed"))
 
 
 @app.command()
-def train(config: Path) -> None:
-    """Train a model from a YAML config (WS6)."""
-    raise NotImplementedError
+def train(
+    config: Path,
+    override: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--override",
+            "-o",
+            help="section.key=value, e.g. -o optim.max_steps=500 (repeatable).",
+        ),
+    ] = None,
+    resume: bool = typer.Option(True, help="Continue from run.out_dir/last.pt if it exists."),
+    max_steps: int | None = typer.Option(
+        None, help="Stop at this step (default: optim.max_steps)."
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Train the note/lighting model from a YAML config, e.g. configs/note_v0.yaml (WS6)."""
+    try:
+        from bsmapper.training import TrainConfig
+        from bsmapper.training.trainer import Trainer
+    except ImportError as e:
+        raise typer.Exit(f"Training needs the ml extra: pip install -e .[ml] ({e})") from e
+
+    _setup_logging(verbose)
+    try:
+        cfg = TrainConfig.load(config, override)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    trainer = Trainer(cfg, resume=resume)
+    typer.echo(
+        f"{trainer.model.num_parameters() / 1e6:.1f}M parameters on {trainer.device}, "
+        f"{len(trainer.notes)} note windows"
+        + (f", {len(trainer.lights)} light windows" if trainer.lights is not None else "")
+        + f"; step {trainer.step} -> {max_steps or cfg.optim.max_steps}, out: {cfg.run.out_dir}"
+    )
+    result = trainer.train(max_steps)
+    typer.echo(" ".join(f"{k}={v:.4g}" for k, v in result.items()))
 
 
 @app.command()

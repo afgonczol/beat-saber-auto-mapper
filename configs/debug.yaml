@@ -1,0 +1,39 @@
+# Tiny CPU config: a ~1M-parameter model on a generated toy dataset, a few minutes.
+#   bsmapper train configs/debug.yaml
+# Against the real dataset instead:
+#   bsmapper train configs/debug.yaml -o data.root=data/processed -o run.out_dir=checkpoints/debug_real
+model:
+  d_model: 64
+  n_heads: 4
+  ff_mult: 2
+  dropout: 0.0
+  encoder_layers: 2
+  decoder_layers: 2
+  max_len: 1536
+  light_layers: 1
+  light_max_len: 1536
+  note_memory_layers: 1
+  note_memory_len: 512
+data:
+  root: synthetic
+  synthetic_maps: 16
+  synthetic_windows: 4
+  max_note_tokens: 512
+  max_light_tokens: 512
+  note_memory_tokens: 256
+  lights_gold_only: false
+optim:
+  lr: 1.0e-3
+  warmup_steps: 50
+  max_steps: 300
+  batch_size: 8
+  light_batch_size: 4
+  label_smoothing: 0.0
+run:
+  out_dir: checkpoints/debug
+  device: cpu
+  precision: fp32
+  log_every: 25
+  eval_every: 100
+  eval_batches: 4
+  save_every: 100
