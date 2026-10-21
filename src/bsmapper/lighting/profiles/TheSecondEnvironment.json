@@ -1,7 +1,7 @@
 {
   "environment": "TheSecondEnvironment",
   "name": "The Second",
-  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts).",
+  "source": "Group ids, light counts and axes from KivalEvan/BeatSaber-JSMap (src/beatmap/misc/environment.ts, src/extensions/renamer/group.ts). Ring axis, waves and sweeps calibrated against 9 human-made maps (docs/LIGHTING.md).",
   "basic_types": {
     "0": "Buildings",
     "1": "Logo",
@@ -17,7 +17,7 @@
     },
     "1": {
       "groups": [0, 1],
-      "wave": 0.25
+      "wave": 0.75
     },
     "2": {
       "groups": [10, 12, 4],
@@ -34,18 +34,18 @@
   },
   "spin": {
     "groups": [0, 1],
-    "axis": 1,
+    "axis": 0,
     "spread": 15.0
   },
   "left_sweep": {
-    "groups": [6, 8, 10, 12],
+    "groups": [6, 8, 10, 12, 4],
     "axis": 0,
-    "spread": 0.0
+    "spread": 15.0
   },
   "right_sweep": {
-    "groups": [7, 9, 11, 13],
+    "groups": [7, 9, 11, 13, 5],
     "axis": 0,
-    "spread": 0.0
+    "spread": 15.0
   },
   "groups": {
     "0": {"name": "Rings Big", "count": 15, "color": true, "rotation": [true, true, false]},
