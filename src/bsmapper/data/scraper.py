@@ -5,12 +5,15 @@ Output layout (under `out_dir`, default `data/raw/`):
     zips/<key>.zip      the map as served by BeatSaver
     manifest.jsonl      one line per downloaded map (metadata, gold tag, BeatLeader ratings,
                         zip path, size)
-    state.json          search cursor + rejection reasons, so a rerun picks up where it stopped
+    state/<query>.json  search cursor + rejection reasons per search query, so a rerun picks
+                        up where it stopped
     cache/search/       cached search pages (see BeatSaverClient)
     cache/beatleader/   cached BeatLeader ratings by map hash (see BeatLeaderClient)
 
 Rerunning with the same filters continues from the saved page and skips maps already in the
-manifest. Changing the filters restarts the cursor but still keeps every downloaded map.
+manifest. Each distinct set of filters has its own cursor, so a characteristic-targeted run
+(`FilterConfig.characteristics`) can top up the same directory without moving the main
+cursor. Every run appends to the one shared manifest.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from bsmapper.data.manifest import (
     ScrapeState,
     append_manifest,
     now_iso,
+    query_key,
     read_manifest,
     write_manifest,
 )
@@ -44,7 +48,9 @@ GB = 1024**3
 @dataclass(slots=True)
 class ScrapeConfig:
     out_dir: Path = Path("data/raw")
-    limit: int = 1000  # total maps wanted in the manifest
+    # Total maps wanted in the manifest. With `filters.characteristics`, only maps that have
+    # one of those characteristics count, so a targeted run's limit is independent of the rest.
+    limit: int = 1000
     max_bytes: int = 50 * GB  # stop once downloaded zips reach this size
     min_free_bytes: int = 20 * GB  # stop if the disk has less free space than this
     max_pages: int | None = None  # safety stop for a single run
@@ -56,6 +62,7 @@ class ScrapeConfig:
 class ScrapeResult:
     downloaded: int = 0  # new this run
     total: int = 0  # in the manifest after this run
+    matching: int = 0  # of those, the ones `limit` counts (see ScrapeConfig.limit)
     total_bytes: int = 0
     gold: int = 0
     failed: dict[str, str] = field(default_factory=dict)
@@ -143,20 +150,19 @@ def scrape(
     total_bytes = sum(e.bytes for e in entries)
     result = ScrapeResult(total=len(done), total_bytes=total_bytes)
     result.gold = sum(e.gold for e in entries)
+    result.matching = sum(cfg.filters.wants(e.record) for e in entries)
 
     params = cfg.filters.search_params()
-    state = ScrapeState.load(out)
-    if state.query != params:
-        if state.query:
-            log.info("Filters changed since the last run; restarting the search cursor.")
-        state = ScrapeState(query=params, rejected=state.rejected)
+    state = ScrapeState.load(out, params)
+    if not state.updated_at:
+        log.info("New search cursor for these filters (state/%s.json).", query_key(params))
     page = state.next_page
     pages_this_run = 0
     _cleanup_partials(out)
 
     try:
         while True:
-            if result.total >= cfg.limit:
+            if result.matching >= cfg.limit:
                 result.stop_reason = "limit"
                 break
             if state.exhausted:
@@ -168,12 +174,18 @@ def scrape(
             data = client.search(page, params)
             docs = data.get("docs") or []
             pages_this_run += 1
-            log.info("Page %d: %d maps (manifest has %d)", page, len(docs), result.total)
+            log.info(
+                "Page %d: %d maps (%d/%d toward the limit)",
+                page,
+                len(docs),
+                result.matching,
+                cfg.limit,
+            )
             if not docs:
                 state.exhausted = True
                 continue
             for doc in docs:
-                if result.total >= cfg.limit:
+                if result.matching >= cfg.limit:
                     break
                 budget_stop = _budget_stop(out, cfg, result.total_bytes)
                 if budget_stop:
@@ -199,11 +211,12 @@ def scrape(
                 done.add(rec.key)
                 result.downloaded += 1
                 result.total += 1
+                result.matching += 1
                 result.total_bytes += entry.bytes
                 result.gold += entry.gold
                 log.info(
                     "[%d/%d] %s %s - %s (%.1f MB%s)",
-                    result.total,
+                    result.matching,
                     cfg.limit,
                     rec.key,
                     rec.song_author,
@@ -213,7 +226,7 @@ def scrape(
                 )
             # Only advance once the whole page is handled, so an interrupted page is redone
             # (cheaply: it is cached and finished maps are skipped).
-            if result.total < cfg.limit:
+            if result.matching < cfg.limit:
                 page += 1
                 state.next_page = page
             state.save(out)

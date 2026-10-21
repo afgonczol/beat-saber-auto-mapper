@@ -117,8 +117,12 @@ class FakeBeatSaver:
             page = int(request.url.path.rsplit("/", 1)[1])
             self.search_calls.append(page)
             self.last_params = dict(request.url.params)
-            chunk = self.docs[page * self.page_size : (page + 1) * self.page_size]
-            return httpx.Response(200, json={"docs": chunk, "info": {"total": len(self.docs)}})
+            docs = self.docs
+            if "characteristics" in self.last_params:  # OR, like the real API
+                chars = set(self.last_params["characteristics"].split(","))
+                docs = [d for d in docs if _characteristics(d) & chars]
+            chunk = docs[page * self.page_size : (page + 1) * self.page_size]
+            return httpx.Response(200, json={"docs": chunk, "info": {"total": len(docs)}})
         h = request.url.path.strip("/").removesuffix(".zip")
         self.download_calls.append(h)
         if self.on_download:
@@ -143,6 +147,10 @@ class FakeBeatSaver:
         return BeatLeaderClient(
             cache_dir=cache_dir, transport=httpx.MockTransport(self.handler), **kw
         )
+
+
+def _characteristics(doc: dict[str, Any]) -> set[str]:
+    return {d["characteristic"] for v in doc["versions"] for d in v["diffs"]}
 
 
 def bl_diff(mode: str = "Standard", diff: str = "Expert", **over: Any) -> dict[str, Any]:

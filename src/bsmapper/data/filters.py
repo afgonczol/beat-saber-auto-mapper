@@ -10,6 +10,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from bsmapper.schema import Characteristic
+
+# Names BeatSaver's `characteristics` search filter knows. It silently ignores any other
+# name (and then returns every map), so FilterConfig rejects unknown ones up front.
+SEARCH_CHARACTERISTICS = frozenset({c.value for c in Characteristic} | {"Lawless", "Legacy"})
+
 
 @dataclass(frozen=True, slots=True)
 class BeatLeaderRating:
@@ -171,14 +177,25 @@ class FilterConfig:
     exclude_noodle: bool = True  # also drops Mapping Extensions and Vivify maps
     min_duration: int = 30  # seconds
     max_duration: int = 600
+    # Only maps with at least one difficulty in one of these characteristics (OR).
+    # Empty means any characteristic.
+    characteristics: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.characteristics = tuple(self.characteristics)
+        unknown = sorted(set(self.characteristics) - SEARCH_CHARACTERISTICS)
+        if unknown:
+            known = ", ".join(sorted(SEARCH_CHARACTERISTICS))
+            raise ValueError(f"Unknown characteristic(s) {', '.join(unknown)}; use {known}.")
 
     def search_params(self) -> dict[str, Any]:
         """Server-side pre-filter for `/search/text`. `check` still re-applies everything.
 
         `automapper` is left unset on purpose: BeatSaver reads null as "no AI",
-        false as "only AI" and true as "both".
+        false as "only AI" and true as "both". `characteristics` is a comma-separated
+        OR list, and is left out when empty so the untargeted query stays as it was.
         """
-        return {
+        params: dict[str, Any] = {
             "order": "Rating",
             "minRating": self.min_score,
             "minVotes": self.min_votes,
@@ -186,6 +203,14 @@ class FilterConfig:
             "minDuration": self.min_duration,
             "maxDuration": self.max_duration,
         }
+        if self.characteristics:
+            params["characteristics"] = ",".join(self.characteristics)
+        return params
+
+    def wants(self, rec: MapRecord) -> bool:
+        """True if the map has a difficulty in one of `characteristics` (always, if unset)."""
+        chars = set(self.characteristics)
+        return not chars or any(d.characteristic in chars for d in rec.diffs)
 
 
 def check(rec: MapRecord, cfg: FilterConfig) -> str | None:
@@ -202,6 +227,8 @@ def check(rec: MapRecord, cfg: FilterConfig) -> str | None:
         return "duration"
     if not rec.diffs:
         return "no_diffs"
+    if not cfg.wants(rec):
+        return "characteristic"
     if cfg.exclude_noodle and any(d.noodle or d.mapping_extensions or d.vivify for d in rec.diffs):
         return "mods"
     if not rec.download_url:

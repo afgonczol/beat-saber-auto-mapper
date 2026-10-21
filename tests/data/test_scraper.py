@@ -3,7 +3,13 @@ import json
 import pytest
 
 from bsmapper.data.filters import FilterConfig
-from bsmapper.data.manifest import MANIFEST_NAME, STATE_NAME, ScrapeState, read_manifest
+from bsmapper.data.manifest import (
+    LEGACY_STATE_NAME,
+    MANIFEST_NAME,
+    ScrapeState,
+    read_manifest,
+    state_path,
+)
 from bsmapper.data.scraper import ScrapeConfig, load_curated_keys, scrape
 
 
@@ -14,6 +20,9 @@ def cfg(tmp_path, **kw) -> ScrapeConfig:
 
 def docs(doc, n, start=0):
     return [doc(f"k{i:02d}") for i in range(start, start + n)]
+
+
+MAIN = FilterConfig().search_params()
 
 
 def keys(tmp_path):
@@ -52,7 +61,7 @@ def test_limit_then_resume(tmp_path, fake, doc):
     fb = fake(docs(doc, 10), page_size=3)
     res = scrape(fb.client(tmp_path / "cache"), cfg(tmp_path, limit=4))
     assert res.stop_reason == "limit" and res.total == 4
-    assert ScrapeState.load(tmp_path).next_page == 1  # page 1 not finished yet
+    assert ScrapeState.load(tmp_path, MAIN).next_page == 1  # page 1 not finished yet
 
     res = scrape(fb.client(tmp_path / "cache"), cfg(tmp_path, limit=8))
     assert res.downloaded == 4 and res.total == 8
@@ -74,7 +83,7 @@ def test_resume_after_interruption(tmp_path, fake, doc):
     with pytest.raises(KeyboardInterrupt):
         scrape(fb.client(tmp_path / "cache"), cfg(tmp_path, limit=100))
     assert len(keys(tmp_path)) == 4
-    assert ScrapeState.load(tmp_path).next_page == 1
+    assert ScrapeState.load(tmp_path, MAIN).next_page == 1
 
     fb.on_download = None
     res = scrape(fb.client(tmp_path / "cache"), cfg(tmp_path, limit=100))
@@ -128,7 +137,7 @@ def test_min_free_disk(tmp_path, fake, doc):
 def test_changed_filters_restart_cursor(tmp_path, fake, doc):
     fb = fake(docs(doc, 6), page_size=2)
     scrape(fb.client(), cfg(tmp_path, limit=5))
-    assert ScrapeState.load(tmp_path).next_page == 2
+    assert ScrapeState.load(tmp_path, MAIN).next_page == 2
 
     res = scrape(fb.client(), cfg(tmp_path, limit=6, filters=FilterConfig(min_votes=50)))
     assert fb.search_calls[-3:] == [0, 1, 2]
@@ -139,7 +148,7 @@ def test_max_pages(tmp_path, fake, doc):
     fb = fake(docs(doc, 10), page_size=2)
     res = scrape(fb.client(), cfg(tmp_path, max_pages=2))
     assert res.stop_reason == "max_pages" and res.total == 4
-    assert json.loads((tmp_path / STATE_NAME).read_text())["next_page"] == 2
+    assert json.loads(state_path(tmp_path, MAIN).read_text())["next_page"] == 2
 
 
 def test_curated_list(tmp_path, fake, doc):
@@ -151,3 +160,96 @@ def test_curated_list(tmp_path, fake, doc):
     scrape(fb.client(), cfg(tmp_path / "out", curated_keys=curated))
     gold_keys = [e.record.key for e in read_manifest(tmp_path / "out") if e.gold]
     assert gold_keys == ["k01", "k02"]
+
+
+def one_saber(doc, key):
+    return doc(key, diff={"characteristic": "OneSaber"})
+
+
+RARE = FilterConfig(characteristics=("OneSaber", "360Degree"))
+
+
+def test_targeted_run_keeps_main_cursor(tmp_path, fake, doc):
+    ds = [
+        doc("s0"),
+        one_saber(doc, "o0"),
+        doc("s1"),
+        doc("s2"),
+        one_saber(doc, "o1"),
+        doc("r0", diff={"characteristic": "360Degree"}),
+        doc("s3"),
+        one_saber(doc, "o2"),
+    ]
+    fb = fake(ds, page_size=2)
+    scrape(fb.client(), cfg(tmp_path, limit=3))
+    assert keys(tmp_path) == ["s0", "o0", "s1"]
+    main_state = ScrapeState.load(tmp_path, MAIN)
+    assert main_state.next_page == 1
+
+    res = scrape(fb.client(), cfg(tmp_path, limit=10, filters=RARE))
+    assert fb.last_params["characteristics"] == "OneSaber,360Degree"
+    assert res.stop_reason == "exhausted"
+    assert res.downloaded == 3 and res.matching == 4 and res.total == 6  # o0 was already there
+    assert keys(tmp_path) == ["s0", "o0", "s1", "o1", "r0", "o2"]
+    assert ScrapeState.load(tmp_path, MAIN) == main_state
+    assert len(list((tmp_path / "state").glob("*.json"))) == 2
+
+    # The main run resumes at its own page, and skips the maps the targeted run fetched.
+    n = len(fb.search_calls)
+    res = scrape(fb.client(), cfg(tmp_path, limit=8))
+    assert fb.search_calls[n] == 1
+    assert res.downloaded == 2 and res.total == 8
+    assert len(fb.download_calls) == 8  # nothing downloaded twice
+
+
+def test_targeted_limit_counts_only_matching_maps(tmp_path, fake, doc):
+    ds = [doc("s0"), doc("s1"), doc("s2")] + [one_saber(doc, f"o{i}") for i in range(4)]
+    fb = fake(ds, page_size=10)
+    scrape(fb.client(), cfg(tmp_path, limit=3))
+    res = scrape(fb.client(), cfg(tmp_path, limit=2, filters=RARE))
+    assert res.stop_reason == "limit"
+    assert res.downloaded == 2 and res.matching == 2 and res.total == 5
+
+
+def test_targeted_run_rejects_maps_without_the_characteristic(tmp_path, fake, doc):
+    # The server filters already; the client check is a safety net (e.g. an older version
+    # had the characteristic, the latest does not).
+    d = one_saber(doc, "o0")
+    d["versions"][0]["state"] = "Unpublished"
+    d["versions"].append(dict(doc("o0")["versions"][0], createdAt="2024-01-01T00:00:00Z"))
+    fb = fake([d, one_saber(doc, "o1")])
+    res = scrape(fb.client(), cfg(tmp_path, filters=RARE))
+    assert keys(tmp_path) == ["o1"]
+    assert res.rejected == {"characteristic": 1}
+
+
+def test_legacy_state_file_is_adopted(tmp_path, fake, doc):
+    legacy = tmp_path / LEGACY_STATE_NAME
+    legacy.write_text(json.dumps({"query": MAIN, "next_page": 2}), encoding="utf-8")
+    fb = fake(docs(doc, 10), page_size=2)
+    scrape(fb.client(), cfg(tmp_path, max_pages=1))
+    assert fb.search_calls == [2]
+    assert not legacy.exists()
+    assert ScrapeState.load(tmp_path, MAIN).next_page == 3
+
+
+def test_legacy_state_for_other_filters_is_left_alone(tmp_path, fake, doc):
+    legacy = tmp_path / LEGACY_STATE_NAME
+    other = FilterConfig(min_votes=5).search_params()
+    legacy.write_text(json.dumps({"query": other, "next_page": 2}), encoding="utf-8")
+    fb = fake(docs(doc, 4), page_size=2)
+    scrape(fb.client(), cfg(tmp_path, max_pages=1))
+    assert fb.search_calls == [0]
+    assert legacy.exists()
+
+
+def test_cli_rejects_unknown_characteristic(tmp_path):
+    from typer.testing import CliRunner
+
+    from bsmapper.cli import app
+
+    args = ["data", "scrape", "--out", str(tmp_path), "--characteristics", "OneSaber,Degree90"]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2
+    assert "Degree90" in result.output
+    assert not (tmp_path / MANIFEST_NAME).exists()

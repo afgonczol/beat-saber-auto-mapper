@@ -57,10 +57,19 @@ def _echo_ratings_coverage(out: Path) -> None:
 @data_app.command("scrape")
 def data_scrape(
     out: Path = Path("data/raw"),
-    limit: int = typer.Option(1000, help="Total maps wanted in the manifest (resumes count)."),
+    limit: int = typer.Option(
+        1000,
+        help="Total maps wanted in the manifest (resumes count). With --characteristics, "
+        "only maps having one of them count.",
+    ),
     min_score: float = typer.Option(0.75, help="Minimum BeatSaver rating (0..1)."),
     min_votes: int = typer.Option(30, help="Minimum upvotes + downvotes."),
     since: str = typer.Option("2021-01-01", help="Only maps uploaded on or after this date."),
+    characteristics: str | None = typer.Option(
+        None,
+        help="Only maps with any of these characteristics, comma-separated, e.g. "
+        "OneSaber,360Degree,90Degree. Has its own resume cursor.",
+    ),
     max_gb: float = typer.Option(50.0, help="Stop once downloaded zips reach this many GB."),
     min_free_gb: float = typer.Option(20.0, help="Stop if the disk has less free space."),
     gold_list: str | None = typer.Option(
@@ -88,13 +97,23 @@ def data_scrape(
     since_dt = datetime.fromisoformat(since)
     if since_dt.tzinfo is None:
         since_dt = since_dt.replace(tzinfo=UTC)
+    chars = tuple(c.strip() for c in (characteristics or "").split(",") if c.strip())
+    try:
+        filters = FilterConfig(
+            min_score=min_score,
+            min_votes=min_votes,
+            uploaded_after=since_dt,
+            characteristics=chars,
+        )
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--characteristics") from e
     cfg = ScrapeConfig(
         out_dir=out,
         limit=limit,
         max_bytes=int(max_gb * 1024**3),
         min_free_bytes=int(min_free_gb * 1024**3),
         max_pages=max_pages,
-        filters=FilterConfig(min_score=min_score, min_votes=min_votes, uploaded_after=since_dt),
+        filters=filters,
         curated_keys=load_curated_keys(Path(gold_list)) if gold_list else frozenset(),
     )
     with ExitStack() as stack:
@@ -107,6 +126,8 @@ def data_scrape(
                 BeatLeaderClient(cache_dir=out / "cache", requests_per_second=rps)
             )
         result = run_scrape(client, cfg, ratings=bl)
+    if chars:
+        typer.echo(f"{result.matching} maps in the manifest have {', '.join(chars)}.")
     typer.echo(
         f"Stopped ({result.stop_reason}): {result.downloaded} new, {result.total} total, "
         f"{result.gold} gold, {result.total_bytes / 1024**3:.2f} GB, "

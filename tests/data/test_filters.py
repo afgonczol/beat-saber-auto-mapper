@@ -88,3 +88,20 @@ def test_gold_reasons(doc):
     assert gold_reasons(rec(doc, blRanked=True)) == ["beatleader_ranked"]
     assert gold_reasons(rec(doc, curatedAt="2024-01-01T00:00:00Z")) == ["beatsaver_curated"]
     assert gold_reasons(rec(doc), frozenset({"abc"})) == ["curated_list"]
+
+
+def test_characteristics_param():
+    assert "characteristics" not in FilterConfig().search_params()
+    cfg = FilterConfig(characteristics=("OneSaber", "360Degree", "90Degree"))
+    assert cfg.search_params()["characteristics"] == "OneSaber,360Degree,90Degree"
+
+
+def test_unknown_characteristic_is_rejected():
+    with pytest.raises(ValueError, match="_360Degree"):
+        FilterConfig(characteristics=("_360Degree",))
+
+
+def test_check_characteristic(doc):
+    cfg = FilterConfig(characteristics=("OneSaber",))
+    assert check(rec(doc), cfg) == "characteristic"
+    assert check(rec(doc, diff={"characteristic": "OneSaber"}), cfg) is None
