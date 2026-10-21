@@ -10,20 +10,114 @@ data_app = typer.Typer(help="Dataset scraping and building (WS3).")
 app.add_typer(data_app, name="data")
 
 
+_MODE_ALIASES = {"90": "90Degree", "360": "360Degree", "onehand": "OneSaber"}
+_DIFF_ALIASES = {"expert+": "ExpertPlus", "e+": "ExpertPlus", "ex+": "ExpertPlus"}
+
+
+def _parse_enum_list(text: str, enum, aliases: dict[str, str], param: str) -> list:
+    by_name = {m.value.lower(): m for m in enum}
+    out = []
+    for raw in (t.strip() for t in text.split(",")):
+        if not raw:
+            continue
+        key = aliases.get(raw.lower(), raw).lower()
+        if key not in by_name:
+            choices = ", ".join(m.value for m in enum)
+            raise typer.BadParameter(
+                f"unknown value {raw!r}; choose from {choices}", param_hint=param
+            )
+        if by_name[key] not in out:
+            out.append(by_name[key])
+    if not out:
+        raise typer.BadParameter("give at least one value", param_hint=param)
+    return out
+
+
 @app.command()
 def generate(
     audio: Path,
     out: Path = Path("out"),
-    difficulties: str = "Easy,Normal,Hard,Expert,ExpertPlus",
-    modes: str = "Standard",
-    lighting: str = "v3",
-    zip_output: bool = typer.Option(True, "--zip/--no-zip"),
+    difficulties: str = typer.Option(
+        "Easy,Normal,Hard,Expert,ExpertPlus", help="Comma-separated; Expert+ works too."
+    ),
+    modes: str = typer.Option(
+        "Standard", help="Comma-separated: Standard, OneSaber, NoArrows, 90Degree, 360Degree."
+    ),
+    lighting: str = typer.Option("v3", help="Lightshow style: v3, vanilla or chroma."),
+    zip_output: bool = typer.Option(True, "--zip/--no-zip", help="Also write a zip."),
     style: float | None = typer.Option(None, min=0.0, max=1.0, help="0 = flowy, 1 = technical."),
     install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
     seed: int = 0,
+    temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
+    njs: float | None = typer.Option(None, min=1.0, help="Override the per-difficulty NJS."),
+    environment: str | None = typer.Option(None, help="Info.dat environment, e.g. EDMEnvironment."),
+    tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Generate a full map folder from an audio file (WS7)."""
-    raise NotImplementedError
+    """Generate a full map folder (and zip) from an audio file (WS7).
+
+    Notes come from the placeholder StubGenerator until the WS6 model is trained.
+    """
+    from bsmapper.generation import GenerateOptions, Pipeline, install_map, load_config
+    from bsmapper.generation.install import config_path
+    from bsmapper.lighting import STYLES
+    from bsmapper.schema import Characteristic, Difficulty
+
+    _setup_logging(verbose)
+    if not audio.is_file():
+        raise typer.BadParameter(f"{audio} is not a file", param_hint="AUDIO")
+    if lighting not in STYLES:
+        raise typer.BadParameter(f"choose from {', '.join(STYLES)}", param_hint="--lighting")
+    opts = GenerateOptions(
+        modes=_parse_enum_list(modes, Characteristic, _MODE_ALIASES, "--modes"),
+        difficulties=_parse_enum_list(difficulties, Difficulty, _DIFF_ALIASES, "--difficulties"),
+        lighting=lighting,  # type: ignore[arg-type]
+        style=style,
+        seed=seed,
+        temperature=temperature,
+        njs=njs,
+        environment=environment,
+    )
+    game = load_config()
+    if lighting == "chroma" and not game.chroma_installed():
+        typer.secho(
+            f"Warning: Chroma is not installed ({game.chroma_dll} is missing). The map still "
+            "loads, but its Chroma colours only show with the Chroma mod; use --lighting v3 "
+            f"for unmodded Beat Saber. Set [game] beat_saber_dir in {config_path()} if the "
+            "game is elsewhere.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+    def progress(stage: str, fraction: float, message: str) -> None:
+        typer.echo(f"[{fraction:4.0%}] {stage:<8} {message}")
+
+    result = Pipeline(tracker=tracker).run(
+        audio, out, opts, zip_output=zip_output, progress=progress
+    )
+    bm = result.beatmap
+    typer.echo(
+        f"\n{bm.song_name} - {bm.song_author or '?'}  "
+        f"({result.song.bpm:g} BPM, {bm.environment}, {lighting} lighting, {bm.mapper})"
+    )
+    for res in result.difficulties:
+        d = res.dmap
+        typer.echo(
+            f"  {d.characteristic:<10} {d.difficulty:<10} {len(d.notes):5d} notes "
+            f"{res.nps:5.2f} NPS  NJS {d.njs:g} offset {d.njs_offset:+g}  {res.report.summary()}"
+        )
+    for note in result.notes:
+        typer.secho(f"Note: {note}", fg=typer.colors.YELLOW)
+    typer.echo(f"Map folder: {result.map_dir}")
+    if result.zip_path:
+        typer.echo(f"Zip: {result.zip_path}")
+    if install:
+        try:
+            dest = install_map(result.map_dir, game)
+        except (OSError, FileNotFoundError) as e:
+            typer.secho(f"Install failed: {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from e
+        typer.echo(f"Installed to {dest}")
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -181,23 +275,30 @@ def serve(
     port: int = 8765,
     work_dir: Path = Path("out/server"),
     web_dist: str | None = typer.Option(None, help="Built web UI folder; default: web/dist."),
+    mock: bool = typer.Option(False, help="Serve canned maps (UI development), not the pipeline."),
     mock_delay: float = typer.Option(0.4, help="Seconds per mock pipeline step."),
+    tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Run the local web UI and jobs API (WS9). Uses the mock pipeline for now."""
+    """Run the local web UI and jobs API (WS9) on the generation pipeline (WS7)."""
     try:
         import uvicorn
 
         from bsmapper.server.app import create_app
         from bsmapper.server.mock import MockJobRunner
+        from bsmapper.server.pipeline_runner import PipelineJobRunner
     except ImportError as e:
         raise typer.Exit(
             f"The server needs the server extra: pip install -e .[server] ({e})"
         ) from e
 
     _setup_logging(verbose)
-    application = create_app(
-        MockJobRunner(step_delay=mock_delay), work_dir, Path(web_dist) if web_dist else None
-    )
+    if mock:
+        runner = MockJobRunner(step_delay=mock_delay)
+    else:
+        from bsmapper.generation import Pipeline
+
+        runner = PipelineJobRunner(Pipeline(tracker=tracker))
+    application = create_app(runner, work_dir, Path(web_dist) if web_dist else None)
     typer.echo(f"bsmapper UI on http://{host}:{port}/  (API docs at /docs)")
     uvicorn.run(application, host=host, port=port, log_level="debug" if verbose else "info")

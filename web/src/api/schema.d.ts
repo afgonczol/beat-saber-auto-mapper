@@ -93,7 +93,7 @@ export interface paths {
         };
         /**
          * Job Audio
-         * @description The uploaded song, for playback in the preview (supports range requests).
+         * @description The song for the preview, aligned with the map (supports range requests).
          */
         get: operations["job_audio_api_jobs__job_id__audio_get"];
         put?: never;
@@ -892,7 +892,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The upload. */
+            /** @description The song. */
             200: {
                 headers: {
                     [name: string]: unknown;
