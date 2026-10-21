@@ -1,0 +1,115 @@
+// Thin client for the jobs API. Types come from openapi.json (`npm run gen:api`).
+import type { components } from "./schema";
+
+type S = components["schemas"];
+export type JobInfo = S["JobInfo"];
+export type JobOptions = S["JobOptions"];
+export type JobEvent = S["JobEvent"];
+export type JobStatus = S["JobStatus"];
+export type MapPreview = S["MapPreview"];
+export type DifficultyWarning = S["DifficultyWarning"];
+export type RegenerateRequest = S["RegenerateRequest"];
+export type Beatmap = S["Beatmap"];
+export type DifficultyMap = S["DifficultyMap"];
+export type Lightshow = S["Lightshow"];
+export type Characteristic = S["Characteristic"];
+export type Difficulty = S["Difficulty"];
+export type LightingStyle = JobOptions["lighting"];
+
+export const MODES: Characteristic[] = ["Standard", "OneSaber", "NoArrows", "90Degree", "360Degree"];
+export const DIFFICULTIES: Difficulty[] = ["Easy", "Normal", "Hard", "Expert", "ExpertPlus"];
+export const TERMINAL: JobStatus[] = ["done", "failed"];
+
+export const MODE_LABEL: Record<string, string> = {
+  Standard: "Standard",
+  OneSaber: "One Saber",
+  NoArrows: "No Arrows",
+  "90Degree": "90°",
+  "360Degree": "360°",
+  Lightshow: "Lightshow",
+};
+export const DIFFICULTY_LABEL: Record<string, string> = {
+  Easy: "Easy",
+  Normal: "Normal",
+  Hard: "Hard",
+  Expert: "Expert",
+  ExpertPlus: "Expert+",
+};
+
+const BASE = "/api";
+
+async function json<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (Array.isArray(body.detail)) detail = body.detail.map((d: { msg: string }) => d.msg).join("; ");
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+export async function createJob(audio: File, options: JobOptions): Promise<JobInfo> {
+  const form = new FormData();
+  form.append("audio", audio, audio.name);
+  for (const m of options.modes ?? []) form.append("modes", m);
+  for (const d of options.difficulties ?? []) form.append("difficulties", d);
+  form.append("lighting", options.lighting ?? "v3");
+  if (options.style != null) form.append("style", String(options.style));
+  form.append("seed", String(options.seed ?? 0));
+  return json(await fetch(`${BASE}/jobs`, { method: "POST", body: form }));
+}
+
+export async function getJob(id: string): Promise<JobInfo> {
+  return json(await fetch(`${BASE}/jobs/${id}`));
+}
+
+export async function getMap(id: string): Promise<MapPreview> {
+  return json(await fetch(`${BASE}/jobs/${id}/map`));
+}
+
+export async function regenerate(id: string, req: RegenerateRequest): Promise<JobInfo> {
+  return json(
+    await fetch(`${BASE}/jobs/${id}/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    }),
+  );
+}
+
+export const audioUrl = (id: string) => `${BASE}/jobs/${id}/audio`;
+export const downloadUrl = (id: string) => `${BASE}/jobs/${id}/download`;
+
+/** Follow a job's SSE stream until it reports done/failed. Returns an unsubscribe function. */
+export function followJob(
+  id: string,
+  after: number,
+  onEvent: (e: JobEvent) => void,
+  onError: (message: string) => void,
+): () => void {
+  const es = new EventSource(`${BASE}/jobs/${id}/events?after=${after}`);
+  let closed = false;
+  const handle = (msg: MessageEvent) => {
+    const event = JSON.parse(msg.data) as JobEvent;
+    onEvent(event);
+    if (event.type === "status" && TERMINAL.includes(event.status)) {
+      closed = true;
+      es.close();
+    }
+  };
+  es.addEventListener("status", handle);
+  es.addEventListener("progress", handle);
+  es.onerror = () => {
+    // EventSource retries by itself; only give up if the server refuses outright.
+    if (!closed && es.readyState === EventSource.CLOSED) onError("Lost the connection to the server.");
+  };
+  return () => {
+    closed = true;
+    es.close();
+  };
+}
