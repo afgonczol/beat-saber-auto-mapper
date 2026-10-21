@@ -158,9 +158,60 @@ def data_ratings(
 
 
 @data_app.command("build")
-def data_build(raw: Path = Path("data/raw"), out: Path = Path("data/processed")) -> None:
-    """Parse, analyze and tokenize downloaded maps into training shards (WS3)."""
-    raise NotImplementedError
+def data_build(
+    raw: Path = Path("data/raw"),
+    out: Path = Path("data/processed"),
+    workers: int | None = typer.Option(None, help="CPU worker processes (default: cores - 2)."),
+    tracker: str = typer.Option(
+        "beat_this",
+        help="Beat tracker for the grid-drift stat: beat_this (GPU), librosa, auto or none.",
+    ),
+    limit: int | None = typer.Option(None, help="Only the first N maps of the manifest."),
+    keys: str | None = typer.Option(None, help="Only these map keys, comma-separated."),
+    retry_errors: bool = typer.Option(False, help="Process maps again that crashed before."),
+    pack_only: bool = typer.Option(False, help="Skip processing; rewrite the shards only."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Parse, analyze and tokenize downloaded maps into training shards (WS3).
+
+    Safe to rerun: maps already processed are skipped, then the shards, the
+    manifest and the stats are rewritten from all processed maps.
+    """
+    from bsmapper.data.build import BuildConfig, run_build
+    from bsmapper.data.pack import pack
+
+    _setup_logging(verbose)
+    if tracker not in ("beat_this", "librosa", "auto", "none"):
+        raise typer.BadParameter(
+            "expected beat_this, librosa, auto or none", param_hint="--tracker"
+        )
+    cfg = BuildConfig(
+        raw_dir=raw,
+        out_dir=out,
+        tracker=tracker,
+        limit=limit,
+        keys=tuple(k.strip() for k in (keys or "").split(",") if k.strip()),
+        retry_errors=retry_errors,
+    )
+    if workers:
+        cfg.workers = workers
+    if pack_only:
+        from bsmapper.data.build import select_entries
+
+        meta = pack(out, raw, keys=[k for k, _ in select_entries(cfg)])
+    else:
+        result = run_build(cfg)
+        typer.echo(
+            f"Processed {sum(result.processed.values())} maps "
+            f"({result.skipped_done} were already done), beat-tracked {result.tracked}, "
+            f"in {result.seconds / 60:.1f} min."
+        )
+        meta = result.pack
+    if meta:
+        from bsmapper.data.stats import summary_lines
+
+        for line in summary_lines(meta["stats"]):
+            typer.echo(line)
 
 
 @app.command()
