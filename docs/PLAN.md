@@ -262,13 +262,20 @@ code changes.
 |---|---|---|
 | M0 | ✅ done | CI workflow written but not pushed (the gh token lacks the `workflow` scope) |
 | M1 | ✅ done | PRs #14–#16, #19, #22 |
-| M2 | 🟡 v0 done, v1 in progress | v0: 2,448 maps / 7,526 difficulties / 25.9M note tokens (#24). v1 scrape to ~10k maps running |
+| M2 | 🟡 v0 done, v1 downloaded | v0: 2,448 maps / 7,526 difficulties / 25.9M note tokens (#24). v1: 10,001 maps / 66 GB raw (#30), not processed yet |
 | M3 | 🟡 trained, not evaluated | `note_v0` (88.6M params, 60k steps): val note loss 1.563, acc 0.773, mild overfit. WS10 eval (#11) next |
-| M4 | 🟡 stub only | Pipeline + `generate --install` merged (#25, #26); the stub map loads in-game. Wiring `note_v0` into ModelGenerator (WS7, on ws/7-model-generator) |
+| M4 | 🟡 model playable | `note_v0` drives `generate` and the server (#29). First model playtest passed on timing and flow; density and reaction-time fixes are in progress (see below) |
 | M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28) awaits an in-game recheck. ML lighting decoder trained (val loss 1.78); integration with WS7 |
 | M6 | ⬜ not started | Rare-mode data topped up (#18); the model is conditioned on all characteristics. WS6b (#12) |
 | M7 | 🟡 mostly done | UI shell (#21), real pipeline + install button (#25, #26) |
 | M8 | ⬜ not started | |
+
+### Playtest log
+
+| Date | Map | Findings | Follow-up |
+|---|---|---|---|
+| 2026-10-21 | Stronger (stub notes, L0 v3 lights) | Loads in-game; inner lasers stuck at 60° and blocked the notes in the drop | Fixed in #28 (rest pose, 30° cap) |
+| 2026-10-22 | Stronger (`note_v0`, model lights) | Notes on the beat, swings flow well. **Expert too easy, long breaks**: 2.82 NPS vs a human median of 3.68. **Expert+ spawn-to-strike feels too fast**: NJS 18 / 0.6 s, which is the human median, but the user prefers more time | Density calibration + gap filling; `--reaction-time` option and a comfier default table (Expert+ NJS 17 / 0.70 s) |
 
 ## 7. Splitting work between agents
 
