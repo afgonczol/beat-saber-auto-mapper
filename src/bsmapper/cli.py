@@ -15,6 +15,32 @@ _MODE_ALIASES = {"90": "90Degree", "360": "360Degree", "onehand": "OneSaber"}
 _DIFF_ALIASES = {"expert+": "ExpertPlus", "e+": "ExpertPlus", "ex+": "ExpertPlus"}
 
 
+def _parse_jump_option(text: str | None, param: str, low: float, high: float):
+    """``"0.8"`` -> (0.8, {}); ``"Expert=0.8,Expert+=0.7"`` -> (None, {Difficulty: 0.8, ...})."""
+    from bsmapper.schema import Difficulty
+
+    if not text:
+        return None, {}
+
+    def number(raw: str) -> float:
+        try:
+            value = float(raw)
+        except ValueError:
+            raise typer.BadParameter(f"{raw!r} is not a number", param_hint=param) from None
+        if not low <= value <= high:
+            raise typer.BadParameter(f"{value:g} is outside {low:g}..{high:g}", param_hint=param)
+        return value
+
+    if "=" not in text:
+        return number(text.strip()), {}
+    per = {}
+    for part in (p.strip() for p in text.split(",") if p.strip()):
+        name, _, value = part.partition("=")
+        (diff,) = _parse_enum_list(name, Difficulty, _DIFF_ALIASES, param)
+        per[diff] = number(value.strip())
+    return None, per
+
+
 def _parse_enum_list(text: str, enum, aliases: dict[str, str], param: str) -> list:
     by_name = {m.value.lower(): m for m in enum}
     out = []
@@ -50,7 +76,14 @@ def generate(
     install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
     seed: int = 0,
     temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
-    njs: float | None = typer.Option(None, min=1.0, help="Override the per-difficulty NJS."),
+    njs: str | None = typer.Option(
+        None, help="NJS: one value for every difficulty, or per difficulty (Expert=16,Expert+=17)."
+    ),
+    reaction_time: str | None = typer.Option(
+        None,
+        help="Seconds from spawn to strike: one value for Expert and Expert+, or per "
+        "difficulty (Hard=0.9,Expert+=0.75). Defaults: 1.2/1.0/0.88/0.8/0.7.",
+    ),
     environment: str | None = typer.Option(None, help="Info.dat environment, e.g. EDMEnvironment."),
     generator: str = typer.Option(
         "auto", help="Notes from: model, stub, or auto (the model when a checkpoint is found)."
@@ -76,7 +109,14 @@ def generate(
     Notes and lights come from the trained WS6 model when a checkpoint is found, else from
     the placeholder stub generator and the rule lightshow.
     """
-    from bsmapper.generation import GenerateOptions, install_map, load_config, make_pipeline
+    from bsmapper.generation import (
+        GenerateOptions,
+        JumpOverride,
+        configured_jumps,
+        install_map,
+        load_config,
+        make_pipeline,
+    )
     from bsmapper.generation.install import config_path
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
@@ -92,6 +132,15 @@ def generate(
     ):
         if value not in choices:
             raise typer.BadParameter(f"choose from {', '.join(choices)}", param_hint=hint)
+    njs_all, njs_per = _parse_jump_option(njs, "--njs", 1.0, 40.0)
+    rt_all, rt_per = _parse_jump_option(reaction_time, "--reaction-time", 0.3, 2.0)
+    if rt_all is not None:
+        rt_per = {Difficulty.EXPERT: rt_all, Difficulty.EXPERT_PLUS: rt_all} | rt_per
+    jump = {d: JumpOverride(njs_per.get(d), rt_per.get(d)) for d in {*njs_per, *rt_per}}
+    try:
+        jump_defaults = configured_jumps()
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
         modes=_parse_enum_list(modes, Characteristic, _MODE_ALIASES, "--modes"),
         difficulties=_parse_enum_list(difficulties, Difficulty, _DIFF_ALIASES, "--difficulties"),
@@ -99,7 +148,9 @@ def generate(
         style=style,
         seed=seed,
         temperature=temperature,
-        njs=njs,
+        njs=njs_all,
+        jump=jump,
+        jump_defaults=jump_defaults,
         environment=environment,
         lighting_source=lighting_source,
         bombs=bombs,

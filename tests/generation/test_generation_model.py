@@ -24,13 +24,13 @@ from bsmapper.generation import (  # noqa: E402
     tempo_beatmap,
 )
 from bsmapper.generation import runtime as runtime_mod  # noqa: E402
-from bsmapper.generation.density import NPS_CONDITIONING_GAIN, target_nps  # noqa: E402
+from bsmapper.generation.density import NPS_GAIN, Loudness, target_nps  # noqa: E402
 from bsmapper.generation.lighting import (  # noqa: E402
     ModelLightingGenerator,
     SparseLightshowError,
     check_density,
 )
-from bsmapper.generation.model import request_mask  # noqa: E402
+from bsmapper.generation.model import DensityFeedback, request_mask  # noqa: E402
 from bsmapper.interfaces import GenerationRequest  # noqa: E402
 from bsmapper.models import MapperModel, ModelConfig, StepState, model_state  # noqa: E402
 from bsmapper.rules import RuleChecker  # noqa: E402
@@ -110,11 +110,54 @@ def test_generate_many_decodes_and_post_processes(tiny_model, analysis) -> None:
     assert ModelGenerator(tiny_model, FAST).generate(analysis, requests[1]).difficulty == "Hard"
 
 
-def test_heuristic_nps_is_scaled_and_explicit_kept() -> None:
+def test_wanted_nps_defaults_to_the_heuristic() -> None:
     filled = ModelGenerator._with_nps(req(Difficulty.EXPERT_PLUS), 120.0)
     expected = target_nps(Difficulty.EXPERT_PLUS, Characteristic.STANDARD, 120.0)
-    assert filled.target_nps == pytest.approx(expected * NPS_CONDITIONING_GAIN, abs=0.01)
+    assert filled.target_nps == expected
     assert ModelGenerator._with_nps(req(target_nps=2.0), 120.0).target_nps == 2.0
+    assert all(1.0 <= g <= 1.5 for g in NPS_GAIN.values())
+
+
+def test_boosted_candidates_decode_in_the_same_batch(tiny_model, analysis) -> None:
+    gen = ModelGenerator(tiny_model, FAST)
+    (dmap,) = gen.generate_many(analysis, [req(Difficulty.EXPERT, seed=1)])
+    boosted, windows = gen.last_boosted[0]
+    assert windows == 3 and 0 <= boosted <= windows
+    off = ModelGenerator(tiny_model, ModelSettings(max_body_tokens=48, density_boosts=()))
+    off.generate_many(analysis, [req(Difficulty.EXPERT, seed=1)])
+    assert off.last_boosted == [(0, 3)]
+
+
+def note_body(ticks: list[int]) -> list[int]:
+    body, color = [], Color.RED
+    for t in ticks:
+        body += [V.id("TIME", t), V.id("NOTE", color), V.id("POS", (1, 0)),
+                 V.id("DIR", CutDirection.ANY)]  # fmt: skip
+        color = Color.BLUE if color == Color.RED else Color.RED
+    return body
+
+
+def test_density_feedback_keeps_the_fuller_window_and_syncs_rows(analysis) -> None:
+    beatmap = tempo_beatmap(analysis)
+    r = req(Difficulty.EXPERT, target_nps=4.0)
+    metas = [DifficultyMap(r.characteristic, r.difficulty) for _ in range(2)]
+    masker = RuleMasker([r, r], metas, beatmap, RuleChecker())
+    loud = Loudness(np.full(48 * 24, 0.6))
+    fb = DensityFeedback(masker, [[0, 1]], [4.0], [2.0], loud, beatmap)
+    sparse = note_body([0, 24 * 12])  # two notes, a 12-beat hole
+    full = note_body(list(range(0, 384, 12)))  # every half beat
+    bodies = [sparse, full]
+    fb.on_window(0, bodies)
+    assert bodies[0] == full and bodies[1] == full  # the base row continues from the choice
+    assert fb.boosted == [1]
+    assert len(masker.states[0].notes) == len(masker.states[1].notes) == 32
+    # a window that is fine as it is stays with the base candidate
+    bodies = [note_body(list(range(0, 384, 12))), note_body(list(range(0, 384, 6)))]
+    fb.on_window(1, bodies)
+    assert fb.boosted == [1]
+    quiet = Loudness(np.zeros(48 * 24))
+    calm = DensityFeedback(masker, [[0, 1]], [4.0], [2.0], quiet, beatmap)
+    assert calm.score(0, 2, []) < calm.score(0, 2, [32.0 + i / 2 for i in range(32)])
 
 
 def test_request_masks() -> None:

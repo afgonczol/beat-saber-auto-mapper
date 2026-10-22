@@ -7,9 +7,15 @@ Decoding is WS6's ``NoteSampler``: 16-beat windows, the previous window's tail a
 grammar masks, temperature / top-p / seed and classifier-free guidance on STYLE. This
 module adds what generation needs on top:
 
-- **conditioning**: ``Conditioning.from_request``; a request without ``target_nps`` gets
-  the per-difficulty heuristic from ``density``, scaled by ``NPS_CONDITIONING_GAIN``
-  (the v0 model undershoots what it is conditioned on).
+- **conditioning**: ``Conditioning.from_request``. ``target_nps`` is the NPS wanted in
+  the map (the per-difficulty heuristic from ``density`` when it is None); the model is
+  conditioned on it times ``density.NPS_GAIN``, since v0 undershoots its conditioning.
+- **density feedback**: every difficulty is decoded next to a copy conditioned on a
+  higher NPS (``ModelSettings.density_boosts``). After each window the candidate that best
+  fits the window's expected note count (wanted NPS x the music's loudness there) and
+  leaves no long gaps over loud music (``density.GAP_LIMIT_BEATS``) is kept, and every
+  copy continues from it: its tokens become the next window's context and its rules state
+  is copied, so a resampled window is seamless.
 - **request mask**: object types the request forbids (bombs, walls, arcs, chains),
   red notes in One Saber, arrows in No Arrows, rotations outside 90/360.
 - **rules mask** (``mask_fn``): one ``bsmapper.rules.MapState`` per sequence, fed every
@@ -30,7 +36,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from bsmapper.generation.density import NPS_CONDITIONING_GAIN, target_nps
+from bsmapper.generation.density import (
+    GAP_LIMIT_BEATS,
+    Loudness,
+    conditioning_nps,
+    loud_gaps,
+    target_nps,
+)
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.generation.timing import tempo_beatmap
 from bsmapper.interfaces import AudioAnalysis, GenerationRequest
@@ -71,6 +83,10 @@ class ModelSettings:
     rule_masks: bool = True
     context_events: int = 16
     max_body_tokens: int = 1024
+    # Extra candidates per difficulty, as multiples of its conditioning NPS; () = off.
+    density_boosts: tuple[float, ...] = (1.6,)
+    # A boosted window must beat the base one's score by this much to be kept.
+    boost_margin: float = 0.05
 
 
 def song_features(
@@ -171,6 +187,12 @@ class RuleMasker:
             self._sync(b, k, NOTE_GRAMMAR.parse(body))
             self._seen[b] = (k + 1, 0)
 
+    def adopt(self, row: int, source: int) -> None:
+        """Make ``row`` continue from ``source``'s state (after a window was chosen)."""
+        self.states[row] = self.states[source].clone()
+        self._seen[row] = self._seen[source]
+        self._cache.clear()
+
     # --- internals ------------------------------------------------------------------
 
     def _sync(self, b: int, window: int, events) -> None:
@@ -237,6 +259,66 @@ class RuleMasker:
         return hit
 
 
+@dataclass(slots=True)
+class DensityFeedback:
+    """Per-window choice between a difficulty's candidates (base NPS and boosted copies).
+
+    ``groups[g]`` lists the batch rows of request ``g``, base first. After each window the
+    best candidate is kept and copied into the other rows (tokens and rules state).
+    """
+
+    masker: RuleMasker
+    groups: list[list[int]]
+    wanted: list[float]  # NPS wanted per request
+    gap_limits: list[float]
+    loudness: Loudness
+    beatmap: Beatmap
+    margin: float = 0.05
+    boosted: list[int] | None = None  # windows taken from a boosted candidate, per request
+    last_note: list[float | None] | None = None
+    windows: int = 0
+
+    def __post_init__(self) -> None:
+        self.boosted = [0] * len(self.groups)
+        self.last_note = [None] * len(self.groups)
+
+    def on_window(self, k: int, bodies: list[list[int]]) -> None:
+        self.masker.on_window(k, bodies)
+        self.windows = k + 1
+        for g, rows in enumerate(self.groups):
+            cands = [_note_beats(k, bodies[r]) for r in rows]
+            best = 0
+            if len(rows) > 1:
+                scores = [self.score(g, k, c) + self.margin * j for j, c in enumerate(cands)]
+                best = int(np.argmin(scores))
+            if best:
+                self.boosted[g] += 1  # type: ignore[index]
+            chosen = rows[best]
+            for r in rows:
+                if r != chosen:
+                    bodies[r] = list(bodies[chosen])
+                    self.masker.adopt(r, chosen)
+            if cands[best]:
+                self.last_note[g] = cands[best][-1]  # type: ignore[index]
+
+    def score(self, g: int, k: int, beats: list[float]) -> float:
+        """Lower is better: distance from the expected note count, plus loud gaps."""
+        start, end = k * 16.0, (k + 1) * 16.0
+        seconds = self.beatmap.beat_to_seconds(end) - self.beatmap.beat_to_seconds(start)
+        expected = self.wanted[g] * seconds * self.loudness.activity(start, end)
+        density = abs(len(beats) - expected) / max(expected, 2.0)
+        last = self.last_note[g]  # type: ignore[index]
+        seq = [last if last is not None else start, *beats, end]
+        limit = self.gap_limits[g]
+        gaps = loud_gaps(seq, self.loudness, limit)
+        return density + 0.5 * sum((gap - limit) / limit for gap in gaps)
+
+
+def _note_beats(k: int, body: list[int]) -> list[float]:
+    ticks = {e.tick for e in NOTE_GRAMMAR.parse(body) if e.kind == "NOTE"}
+    return [(k * WINDOW_TICKS + t) / TICKS_PER_BEAT for t in sorted(ticks)]
+
+
 class ModelGenerator:
     """``NoteGenerator`` on the WS6 note model. Expects a song-time analysis (``timing``).
 
@@ -258,6 +340,8 @@ class ModelGenerator:
         self.checker = checker or RuleChecker()
         self.tokenizer = MapTokenizer(context_events=self.settings.context_events)
         self.last_masked_steps = 0
+        # Per request of the last generate_many: (windows from a boosted candidate, windows).
+        self.last_boosted: list[tuple[int, int]] = []
 
     def generate(self, analysis: AudioAnalysis, request: GenerationRequest) -> DifficultyMap:
         return self.generate_many(analysis, [request])[0]
@@ -273,18 +357,22 @@ class ModelGenerator:
         feats = song_features(analysis, beatmap)
         out: list[DifficultyMap | None] = [None] * len(requests)
         self.last_masked_steps = 0
+        self.last_boosted = [(0, 0)] * len(requests)
         for (seed, temperature), idx in groups.items():
-            dmaps = self._decode(feats, beatmap, [requests[i] for i in idx], seed, temperature)
-            for i, dmap in zip(idx, dmaps, strict=True):
-                out[i] = dmap
+            dmaps, boosted = self._decode(
+                feats, beatmap, [requests[i] for i in idx], seed, temperature
+            )
+            for i, dmap, b in zip(idx, dmaps, boosted, strict=True):
+                out[i], self.last_boosted[i] = dmap, b
         return out  # type: ignore[return-value]
 
     @staticmethod
     def _with_nps(request: GenerationRequest, bpm: float) -> GenerationRequest:
+        """Fill in the wanted NPS (the heuristic) when the request has none."""
         if request.target_nps is not None:
             return request
         nps = target_nps(request.difficulty, request.characteristic, bpm)
-        return replace(request, target_nps=round(nps * NPS_CONDITIONING_GAIN, 2))
+        return replace(request, target_nps=nps)
 
     def _decode(
         self,
@@ -293,15 +381,31 @@ class ModelGenerator:
         requests: list[GenerationRequest],
         seed: int,
         temperature: float,
-    ) -> list[DifficultyMap]:
+    ) -> tuple[list[DifficultyMap], list[tuple[int, int]]]:
         from bsmapper.models import NoteSampler, SamplingOptions
 
         s = self.settings
-        metas = []
+        rows: list[GenerationRequest] = []  # every candidate, base first per request
+        groups: list[list[int]] = []
         for r in requests:
+            base = conditioning_nps(r.difficulty, r.target_nps or 0.0)
+            factors = (1.0, *s.density_boosts) if r.target_nps else (1.0,)
+            groups.append(list(range(len(rows), len(rows) + len(factors))))
+            rows += [replace(r, target_nps=round(base * f, 2)) for f in factors]
+        metas = []
+        for r in rows:
             njs, offset = njs_and_offset(r.difficulty, beatmap.bpm, r.njs)
             metas.append(DifficultyMap(r.characteristic, r.difficulty, njs=njs, njs_offset=offset))
-        masker = RuleMasker(requests, metas, beatmap, self.checker, rules=s.rule_masks)
+        masker = RuleMasker(rows, metas, beatmap, self.checker, rules=s.rule_masks)
+        feedback = DensityFeedback(
+            masker,
+            groups,
+            [r.target_nps or 0.0 for r in requests],
+            [GAP_LIMIT_BEATS[r.difficulty] for r in requests],
+            Loudness(feats[:, -1]),
+            beatmap,
+            s.boost_margin,
+        )
         options = SamplingOptions(
             temperature=temperature,
             top_p=s.top_p,
@@ -310,13 +414,15 @@ class ModelGenerator:
             context_events=s.context_events,
             max_body_tokens=s.max_body_tokens,
         )
-        conds = [Conditioning.from_request(r) for r in requests]
+        conds = [Conditioning.from_request(r) for r in rows]
         n_windows = max(1, math.ceil(feats.shape[0] / WINDOW_TICKS))
         sampler = NoteSampler(self.model)
-        callbacks = {"mask_fn": masker.mask, "on_window": masker.on_window}
+        callbacks = {"mask_fn": masker.mask, "on_window": feedback.on_window}
         windows = sampler.generate(feats, conds, options, n_windows=n_windows, **callbacks)
         self.last_masked_steps += masker.masked_steps
-        return [self.tokenizer.decode(w, meta=m) for w, m in zip(windows, metas, strict=True)]
+        dmaps = [self.tokenizer.decode(windows[g[0]], meta=metas[g[0]]) for g in groups]
+        boosted = [(n, feedback.windows) for n in feedback.boosted]  # type: ignore[union-attr]
+        return dmaps, boosted
 
 
 def describe(model: Any) -> str:

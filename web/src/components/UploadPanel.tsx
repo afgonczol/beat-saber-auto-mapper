@@ -32,6 +32,9 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   const [useStyle, setUseStyle] = useState(true);
   const [style, setStyle] = useState(0.5);
   const [seed, setSeed] = useState(0);
+  // Note timing; empty = the server's defaults.
+  const [reactionTime, setReactionTime] = useState("");
+  const [njs, setNjs] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -47,7 +50,15 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
     if (!file) return;
     setBusy(true);
     setError(null);
-    const options: JobOptions = { modes, difficulties, lighting, style: useStyle ? style : null, seed };
+    const options: JobOptions = {
+      modes,
+      difficulties,
+      lighting,
+      style: useStyle ? style : null,
+      seed,
+      reaction_time: reactionTime === "" ? null : Number(reactionTime),
+      njs: njs === "" ? null : Number(njs),
+    };
     try {
       onCreated(await createJob(file, options));
     } catch (e) {
@@ -180,6 +191,36 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
           <button type="button" className="ghost" onClick={() => setSeed(Math.floor(Math.random() * 1e6))}>
             Random
           </button>
+        </fieldset>
+
+        <fieldset className="row">
+          <legend>Note timing</legend>
+          <label title="Seconds from a note appearing to reaching you, for Expert and Expert+">
+            Reaction time (Expert, Expert+)
+            <input
+              type="number"
+              className="seed"
+              min={0.3}
+              max={2}
+              step={0.05}
+              placeholder="0.8 / 0.7 s"
+              value={reactionTime}
+              onChange={(e) => setReactionTime(e.target.value)}
+            />
+          </label>
+          <label title="Note jump speed for every difficulty">
+            NJS
+            <input
+              type="number"
+              className="seed"
+              min={1}
+              max={40}
+              step={0.5}
+              placeholder="default"
+              value={njs}
+              onChange={(e) => setNjs(e.target.value)}
+            />
+          </label>
         </fieldset>
 
         {error && <div className="error">{error}</div>}

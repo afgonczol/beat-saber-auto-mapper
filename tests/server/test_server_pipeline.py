@@ -83,6 +83,20 @@ def test_real_runner_end_to_end(setup) -> None:
     assert analyzer.calls == 1  # the regenerate reused the cached analysis
 
 
+def test_job_options_set_note_timing(monkeypatch, tmp_path: Path) -> None:
+    from bsmapper.generation import JumpOverride
+    from bsmapper.schema import Difficulty
+    from bsmapper.server.models import JobOptions
+    from bsmapper.server.pipeline_runner import _options
+
+    monkeypatch.setenv("BSMAPPER_CONFIG", str(tmp_path / "none.toml"))
+    opts = _options(JobOptions(njs=15.0, reaction_time=0.9))
+    assert opts.jump_for(Difficulty.EXPERT_PLUS) == JumpOverride(15.0, 0.9)
+    assert opts.jump_for(Difficulty.HARD) == JumpOverride(15.0, None)
+    with pytest.raises(ValueError):
+        JobOptions(reaction_time=5.0)
+
+
 def test_bad_upload_fails_the_job(tmp_path: Path) -> None:
     runner = PipelineJobRunner(Pipeline(tracker="librosa"))
     app = create_app(runner, tmp_path / "work", tmp_path / "no-ui")

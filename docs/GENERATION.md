@@ -47,11 +47,26 @@ loads it on its first job and keeps it for every later one.
 - **`ModelGenerator`** runs WS6's `NoteSampler` window by window (prefix, the previous
   window's tail, the body), all difficulties of a mode in one batch. On top of WS6's
   grammar masks it adds:
-  - **Conditioning**: `Conditioning.from_request`. Without `target_nps` the NPS comes from
-    `density.target_nps`, a per-difficulty fit of NPS against BPM on the v0 train split.
-    It is scaled by `NPS_CONDITIONING_GAIN` (1.25), because the v0 model reaches only
-    about 75–80% of the NPS it is conditioned on. `--style` goes in the STYLE token, with
-    classifier-free guidance (`ModelSettings.style_guidance`, 1.5).
+  - **Conditioning**: `Conditioning.from_request`. `target_nps` is the NPS wanted in the
+    map. Without it, the NPS comes from `density.target_nps`, a per-difficulty fit of
+    NPS against BPM on the v0 train split. The model is conditioned on the wanted NPS
+    times `density.NPS_GAIN` (1.12 to 1.33 per difficulty): v0 reaches only part of the
+    NPS it is conditioned on (the median achieved/requested ratio on three songs).
+    `--style` goes in the STYLE token, with classifier-free guidance
+    (`ModelSettings.style_guidance`, 1.5).
+  - **Density feedback** (`DensityFeedback`): the achieved/requested ratio varies a lot
+    between songs (0.4 to 1.2), and v0 leaves long holes in loud music. So every
+    difficulty decodes in the same batch as a copy conditioned at 1.6× its NPS
+    (`ModelSettings.density_boosts`). After each 16-beat window the better candidate is
+    kept. "Better" means two things:
+    - closest to the expected note count, which is the wanted NPS times the window's
+      length times its loudness, so quiet windows expect fewer notes;
+    - fewest gaps over loud music longer than `density.GAP_LIMIT_BEATS` (Easy 8,
+      Normal 6, Hard 4, Expert 2, Expert+ 2 beats).
+
+    Both rows then continue from the chosen window, with its tokens as context and its
+    rules state copied, so a resampled window joins seamlessly. This costs about
+    30–50% more decoding time. `density_boosts=()` turns it off.
   - **Object flags**: `density.object_flags` turns bombs, arcs and chains on only where
     most human maps of that mode and difficulty use them. The flags tell the model "this
     map uses X", so turning everything on makes every map use everything.
@@ -104,12 +119,63 @@ loads it on its first job and keeps it for every later one.
 - Most of its walls are one-lane side walls and short "flick" accents. On Expert+, 24
   walls reach head height in the centre lanes and make the player move.
 
+## Density before and after the feedback loop
+
+Seed 0, `note_v0/best.pt`, all Standard difficulties, NPS from first to last note. A loud
+gap is the longest gap between notes over music at least half as loud as the song's
+typical level.
+
+| song | | Easy | Normal | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Stronger (104 BPM) | wanted NPS | 1.45 | 2.00 | 2.80 | 3.68 | 4.50 |
+| | NPS before → after | 1.22 → 1.47 | 2.27 → 1.83 | 2.66 → 2.69 | 2.82 → 3.52 | 4.08 → 4.24 |
+| | loud gap before → after | 8 → 5 | 2.5 → 3 | 3 → 4 | 13.25 → 2.33 | 2.25 → 4 |
+| Toxic (143 BPM) | wanted NPS | 1.59 | 2.26 | 3.14 | 4.13 | 5.15 |
+| | NPS before → after | 1.64 → 1.65 | 2.23 → 2.22 | 3.31 → 3.38 | 4.08 → 4.60 | 4.72 → 5.13 |
+| | loud gap before → after | 14.5 → 4 | 23.4 → 7 | 8 → 6.5 | 5.8 → 2 | 10.25 → 2.96 |
+| trap song (82.5 BPM) | wanted NPS | 1.38 | 1.85 | 2.60 | 3.43 | 4.14 |
+| | NPS before → after | 0.39 → 0.92 | 0.38 → 1.20 | 1.43 → 1.61 | 2.13 → 2.69 | 2.54 → 2.90 |
+| | loud gap before → after | 8 → 4 | 16 → 2.5 | 12.7 → 2 | 1.5 → 0.5 | 2 → 2 |
+
+- The rules masks and post-processing remove nothing. Raw model output and the final map
+  differ by 0–2 notes per difficulty. The shortfall was the model's own output.
+- The trap song is still sparse (62–78% of the wanted NPS). Its grid is uncertain:
+  librosa gives 110 BPM, beat_this gives 82.5.
+- A second boosted copy (1.6× and 2.4×) closed Stronger's Expert+ gap. But Toxic
+  overshot by about 25%, and decoding took 60–70 s instead of about 40 s, so the default
+  keeps one.
+
 ## NJS and offset
 
-NJS is fixed per difficulty (10, 10, 12, 16, 18). The offset brings the reaction time
-(half jump duration in seconds, as the game computes it) to 1.0 / 0.9 / 0.8 / 0.7 / 0.6 s,
-so a slow song does not give Expert+ two seconds of warning. `--njs` overrides the NJS;
-the offset still follows the reaction-time target.
+The offset brings the reaction time (half jump duration in seconds, as the game computes
+it) to a per-difficulty target, so a slow song does not give Expert+ two seconds of
+warning:
+
+| | Easy | Normal | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- |
+| NJS | 10 | 12 | 13 | 16 | 17 |
+| reaction time | 1.20 s | 1.00 s | 0.88 s | 0.80 s | 0.70 s |
+| human v0 median | 10 / 1.20 s | 12 / 1.00 s | 14 / 0.83 s | 16 / 0.69 s | 18 / 0.59 s |
+
+- Easy to Hard follow the human medians; Hard uses the 90–120 BPM ones.
+- Expert and Expert+ give about the 75th percentile of human reaction time (Expert+
+  ≈ 23.8 m jump distance). The playtest found 0.6 s on Expert+ rushed.
+
+To override them:
+
+- **CLI**: `--njs 16` applies to every difficulty, `--reaction-time 0.85` to Expert and
+  Expert+. Both also take per-difficulty values, such as
+  `--reaction-time Hard=0.95,Expert+=0.75` or `--njs Expert=16,Expert+=18`.
+- **Server and web UI**: `njs` (every difficulty) and `reaction_time` (Expert and Expert+)
+  in the job options, under "Note timing" in the upload panel.
+- **Defaults** in `~/.bsmapper/config.toml`. They are used by both the CLI and the server,
+  and explicit options win over them:
+
+```toml
+[jump.ExpertPlus]   # or [jump."Expert+"]
+njs = 17
+reaction_time = 0.75
+```
 
 ## Install
 

@@ -36,6 +36,16 @@ class JobOptions(BaseModel):
         default=None, ge=0.0, le=1.0, description="0 = flowy, 1 = technical, null = no preference."
     )
     seed: int = 0
+    njs: float | None = Field(
+        default=None, ge=1.0, le=40.0, description="NJS for every difficulty; null = defaults."
+    )
+    reaction_time: float | None = Field(
+        default=None,
+        ge=0.3,
+        le=2.0,
+        description="Seconds from spawn to strike for Expert and Expert+ (lower difficulties "
+        "keep their defaults); null = defaults (0.8 s and 0.7 s).",
+    )
 
 
 class JobInfo(BaseModel):
