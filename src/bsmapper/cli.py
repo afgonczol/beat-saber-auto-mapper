@@ -52,14 +52,31 @@ def generate(
     temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
     njs: float | None = typer.Option(None, min=1.0, help="Override the per-difficulty NJS."),
     environment: str | None = typer.Option(None, help="Info.dat environment, e.g. EDMEnvironment."),
+    generator: str = typer.Option(
+        "auto", help="Notes from: model, stub, or auto (the model when a checkpoint is found)."
+    ),
+    model: str | None = typer.Option(
+        None,
+        help="Model checkpoint; default [model] checkpoint in ~/.bsmapper/config.toml, "
+        "then checkpoints/note_v0/best.pt.",
+    ),
+    lighting_source: str = typer.Option(
+        "auto", help="Lights from: model, rules, or auto (the model when notes are)."
+    ),
+    device: str | None = typer.Option(None, help="cuda or cpu; default cuda when available."),
+    bombs: bool | None = typer.Option(None, "--bombs/--no-bombs", help="Default: per difficulty."),
+    walls: bool | None = typer.Option(None, "--walls/--no-walls", help="Default: on."),
+    arcs: bool | None = typer.Option(None, "--arcs/--no-arcs", help="Default: per difficulty."),
+    chains: bool | None = typer.Option(None, "--chains/--no-chains", help="Default: per mode."),
     tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Generate a full map folder (and zip) from an audio file (WS7).
 
-    Notes come from the placeholder StubGenerator until the WS6 model is trained.
+    Notes and lights come from the trained WS6 model when a checkpoint is found, else from
+    the placeholder stub generator and the rule lightshow.
     """
-    from bsmapper.generation import GenerateOptions, Pipeline, install_map, load_config
+    from bsmapper.generation import GenerateOptions, install_map, load_config, make_pipeline
     from bsmapper.generation.install import config_path
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
@@ -69,6 +86,12 @@ def generate(
         raise typer.BadParameter(f"{audio} is not a file", param_hint="AUDIO")
     if lighting not in STYLES:
         raise typer.BadParameter(f"choose from {', '.join(STYLES)}", param_hint="--lighting")
+    for value, choices, hint in (
+        (generator, ("auto", "model", "stub"), "--generator"),
+        (lighting_source, ("auto", "model", "rules"), "--lighting-source"),
+    ):
+        if value not in choices:
+            raise typer.BadParameter(f"choose from {', '.join(choices)}", param_hint=hint)
     opts = GenerateOptions(
         modes=_parse_enum_list(modes, Characteristic, _MODE_ALIASES, "--modes"),
         difficulties=_parse_enum_list(difficulties, Difficulty, _DIFF_ALIASES, "--difficulties"),
@@ -78,7 +101,19 @@ def generate(
         temperature=temperature,
         njs=njs,
         environment=environment,
+        lighting_source=lighting_source,
+        bombs=bombs,
+        walls=walls,
+        arcs=arcs,
+        chains=chains,
     )
+    try:
+        pipeline = make_pipeline(generator, lighting_source, model, device, tracker=tracker)
+    except FileNotFoundError as e:
+        raise typer.BadParameter(str(e), param_hint="--model") from e
+    setup = pipeline.setup
+    source = f"model {setup.checkpoint}" if setup.generator == "model" else "stub generator"
+    typer.echo(f"Notes: {source}" + (f" ({setup.reason})" if setup.reason else ""))
     game = load_config()
     if lighting == "chroma" and not game.chroma_installed():
         typer.secho(
@@ -93,19 +128,19 @@ def generate(
     def progress(stage: str, fraction: float, message: str) -> None:
         typer.echo(f"[{fraction:4.0%}] {stage:<8} {message}")
 
-    result = Pipeline(tracker=tracker).run(
-        audio, out, opts, zip_output=zip_output, progress=progress
-    )
+    result = pipeline.run(audio, out, opts, zip_output=zip_output, progress=progress)
     bm = result.beatmap
     typer.echo(
-        f"\n{bm.song_name} - {bm.song_author or '?'}  "
-        f"({result.song.bpm:g} BPM, {bm.environment}, {lighting} lighting, {bm.mapper})"
+        f"\n{bm.song_name} - {bm.song_author or '?'}  ({result.song.bpm:g} BPM, "
+        f"{bm.environment}, {lighting} lighting from {pipeline.last_lighting}, {bm.mapper})"
     )
     for res in result.difficulties:
         d = res.dmap
         typer.echo(
             f"  {d.characteristic:<10} {d.difficulty:<10} {len(d.notes):5d} notes "
-            f"{res.nps:5.2f} NPS  NJS {d.njs:g} offset {d.njs_offset:+g}  {res.report.summary()}"
+            f"{res.nps:5.2f} NPS  NJS {d.njs:g} offset {d.njs_offset:+g}  "
+            f"errors/100 {res.per_100('error'):.2f} warnings/100 {res.per_100('warning'):.2f}  "
+            f"{res.seconds:.1f}s  {res.report.summary()}"
         )
     for note in result.notes:
         typer.secho(f"Note: {note}", fg=typer.colors.YELLOW)
@@ -363,6 +398,9 @@ def serve(
     web_dist: str | None = typer.Option(None, help="Built web UI folder; default: web/dist."),
     mock: bool = typer.Option(False, help="Serve canned maps (UI development), not the pipeline."),
     mock_delay: float = typer.Option(0.4, help="Seconds per mock pipeline step."),
+    generator: str = typer.Option("auto", help="Notes from: model, stub or auto."),
+    model: str | None = typer.Option(None, help="Model checkpoint (see `generate --help`)."),
+    device: str | None = typer.Option(None, help="cuda or cpu; default cuda when available."),
     tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -382,9 +420,16 @@ def serve(
     if mock:
         runner = MockJobRunner(step_delay=mock_delay)
     else:
-        from bsmapper.generation import Pipeline
+        from bsmapper.generation import make_pipeline
 
-        runner = PipelineJobRunner(Pipeline(tracker=tracker))
+        # The model loads once here and serves every job (one at a time, on the GPU).
+        pipeline = make_pipeline(generator, "auto", model, device, tracker=tracker)
+        setup = pipeline.setup
+        typer.echo(
+            f"Notes from {setup.generator}"
+            + (f" ({setup.checkpoint})" if setup.checkpoint else f" ({setup.reason})")
+        )
+        runner = PipelineJobRunner(pipeline)
     application = create_app(runner, work_dir, Path(web_dist) if web_dist else None)
     typer.echo(f"bsmapper UI on http://{host}:{port}/  (API docs at /docs)")
     uvicorn.run(application, host=host, port=port, log_level="debug" if verbose else "info")

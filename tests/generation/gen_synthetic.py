@@ -61,7 +61,10 @@ def make_analysis(
         sections=sections,
         features={
             "onset_strength": frame_onset.astype(np.float32),
+            "spectral_flux": frame_onset.astype(np.float32),
             "rms": np.where(frame_t < silence_s, 0.0, 0.6).astype(np.float32),
+            # log-mel in dB like WS2's (-80 dB floor); louder on onsets
+            "mel": (-80.0 + 50.0 * frame_onset[:, None] * np.ones(80)).astype(np.float32),
         },
         frame_rate=FRAME_RATE,
         beat_features={"onset_strength": onset, "rms": rms},
