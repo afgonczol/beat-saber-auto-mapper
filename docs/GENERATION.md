@@ -1,46 +1,108 @@
 # Generation pipeline (WS7)
 
 `bsmapper generate` and the web server (`bsmapper serve`) both run
-`bsmapper.generation.Pipeline`:
+`bsmapper.generation.Pipeline`, built by `make_pipeline` (see [Choosing the
+generator](#choosing-the-generator)):
 
 | Stage | What happens |
 | --- | --- |
 | analyze | WS2 analysis. The song is padded with `BeatGrid.lead_in_s()` of silence so the bar before the first downbeat starts at 0 s (Beat Saber's beat 0). Map beat = grid beat + beats per bar. `timing.song_time_analysis` shifts the analysis the same way, so generators see `beat_times[i]` = map beat `i`. |
-| generate | One `NoteGenerator.generate(analysis, request)` per mode x difficulty, hardest first. If a lower difficulty comes out at 95% or more of the next harder one's NPS, it is generated again at 80% of it. |
+| generate | Per mode, every difficulty in one batch (`ModelGenerator.generate_many`), or one `NoteGenerator.generate` call each. Then from the hardest down: a difficulty at 95% or more of the next harder one's NPS is generated again at 80% of it, so NPS strictly rises. |
 | rules | `postprocess`: snap to the 24-tick grid, dedupe, replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule, then set NJS and offset (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
-| lighting | WS8 L0 lightshow (`light_beatmap`), v3 group lighting by default (WeaveEnvironment). |
+| lighting | Model lighting (L1) when there is a model, else the WS8 L0 rule lightshow. Both render through WS8 (`lighting.render`), v3 group lighting by default (WeaveEnvironment). Any model failure falls back to L0. |
 | package | WS1 `package_map`: padded `song.egg`, cover (embedded art or a placeholder), v3 difficulty files with a v2 Info.dat, zip. Title and artist come from the tags, else from an `Artist - Title` filename. |
 
 ```bash
 bsmapper generate song.mp3                                  # 5 Standard difficulties, v3 lights, zip
 bsmapper generate song.mp3 --modes Standard,OneSaber,90,360 --difficulties Hard,Expert+ --style 0.7
 bsmapper generate song.mp3 --lighting chroma --install      # warns if Plugins/Chroma.dll is missing
-bsmapper serve            # web UI on the real pipeline; --mock for canned maps during UI work
+bsmapper generate song.mp3 --generator stub --lighting-source rules   # no model at all
+bsmapper serve            # web UI on the same pipeline; --mock for canned maps during UI work
 ```
+
+The CLI prints, per difficulty: notes, NPS, NJS/offset, rule errors and warnings per 100
+notes after post-processing, and generation time.
+
+## Choosing the generator
+
+`--generator auto|model|stub` (default `auto`) and `--lighting-source auto|model|rules`.
+`auto` uses the model when a checkpoint is found and torch is installed, and lights from
+the model whenever the notes come from it. The checkpoint is, in order:
+
+1. `--model PATH`
+2. `[model] checkpoint` in `~/.bsmapper/config.toml`
+3. `checkpoints/note_v0/best.pt` under the current folder or the repository
+
+```toml
+[model]
+checkpoint = 'G:\ClaudeProjects\beat-saber-auto-mapper\checkpoints\note_v0\best.pt'
+```
+
+The model is loaded once per process (`runtime.load_cached`), on CUDA when available
+(`--device cpu` to force the CPU; a failed CUDA load falls back to the CPU). The server
+loads it on its first job and keeps it for every later one.
 
 ## Generators
 
-- **`StubGenerator`** is a placeholder, not the ML model. It picks note times from a
-  per-difficulty grid by onset strength and section energy, up to a target NPS (Easy 1.0 to
-  Expert+ 4.8, capped per beat so slow songs stay calm; One Saber gets 60%). Hands alternate,
-  and each hand alternates down and up swings. Every candidate note is checked with
-  `MapState.candidates_mask` before it is placed. Every few bars both hands may drift a
-  column left or right (lean phrases), and from Normal up a full-height wall over the two
-  columns on the other side often makes the player lean around it. For 90/360 it adds a rotation every few
-  bars (90 stays within ±45°). Its maps say so: the mapper is `bsmapper (stub)` and the
-  difficulty labels are `Stub <difficulty>`.
-- **`ModelGenerator`** is the decoding loop for the WS6 model. It decodes window by window:
-  the conditioning prefix plus the tail context, then token by token with the grammar mask,
-  the request mask (forbidden object types and colours) and the rules mask (heads, cells and
-  directions that `MapState` rejects at the current tick). Each step applies a density bias
-  towards `target_nps`, then samples with temperature, top-p and a seeded RNG. WS6 only has
-  to implement `NoteSampler`:
+- **`ModelGenerator`** runs WS6's `NoteSampler` window by window (prefix, the previous
+  window's tail, the body), all difficulties of a mode in one batch. On top of WS6's
+  grammar masks it adds:
+  - **Conditioning**: `Conditioning.from_request`. Without `target_nps` the NPS comes from
+    `density.target_nps`, a per-difficulty fit of NPS against BPM on the v0 train split.
+    It is scaled by `NPS_CONDITIONING_GAIN` (1.25), because the v0 model reaches only
+    about 75–80% of the NPS it is conditioned on. `--style` goes in the STYLE token, with
+    classifier-free guidance (`ModelSettings.style_guidance`, 1.5).
+  - **Object flags**: `density.object_flags` turns bombs, arcs and chains on only where
+    most human maps of that mode and difficulty use them. The flags tell the model "this
+    map uses X", so turning everything on makes every map use everything.
+    `--bombs/--walls/--arcs/--chains` (and their `--no-` forms) override this.
+  - **Request mask**: forbidden object types, red notes in One Saber, arcs and chains in
+    No Arrows, rotations outside 90/360.
+  - **Rules mask** (`RuleMasker`, WS6's `mask_fn`): one `MapState` per sequence, fed each
+    object as soon as the parser completes it. Before each token, note and bomb heads,
+    cells and directions that would break a hard rule at the current tick are masked out.
+  - **Features**: `song_features` resamples the song-time analysis onto the map's tempo
+    map with WS3b's `map_grid_features`, the exact training layout (80 mel, onset, flux,
+    RMS; silence outside the audio).
 
-```python
-class NoteSampler(Protocol):
-    def encode(self, analysis: AudioAnalysis, start_beat: float, n_beats: int) -> Any: ...
-    def next_logits(self, memory: Any, input_ids: Sequence[int]) -> np.ndarray: ...
-```
+  A batch shares one RNG, so a seed reproduces a whole mode, not one difficulty alone.
+- **`ModelLightingGenerator`** (L1) runs WS6's `LightSampler`. The lights follow the
+  hardest Standard difficulty, re-encoded after post-processing. It decodes vanilla basic
+  events and renders them with WS8's `render`, using the section palettes from the L0
+  planner. So v3 keeps PR #28's rest pose and capped laser sweeps, and Chroma keeps the
+  section colours. A lightshow with fewer than 0.5 light events per bar counts as a
+  failure, and the map gets the L0 rules (with a note).
+- **`StubGenerator`** is a placeholder, not the ML model, used when there is no
+  checkpoint. It picks note times from a per-difficulty grid by onset strength and section
+  energy, up to a target NPS (Easy 1.0 to Expert+ 4.8, capped per beat so slow songs stay
+  calm; One Saber gets 60%). Hands alternate, and each hand alternates down and up swings.
+  Every candidate note is checked with `MapState.candidates_mask` before it is placed.
+  Every few bars both hands may drift a column left or right (lean phrases). From Normal
+  up, a full-height wall over the two columns on the other side often makes the player
+  lean around it. For 90/360 it adds a rotation every few bars (90 stays within ±45°). Its
+  maps say so: the mapper is `bsmapper (stub)` and the difficulty labels are
+  `Stub <difficulty>`.
+
+## Model vs stub (Stronger, 104 BPM, RTX 3090)
+
+`note_v0/best.pt`, seed 0, beat_this grid, all five Standard difficulties.
+
+| | Easy | Normal | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- |
+| human median NPS at 104 BPM (v0 fit) | 1.45 | 2.00 | 2.80 | 3.68 | 4.50 |
+| model NPS | 1.22 | 2.27 | 2.66 | 2.82 | 4.08 |
+| stub NPS | 0.88 | 1.56 | 2.17 | 3.05 | 4.34 |
+| model rule errors / warnings per 100 notes | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| stub rule errors / warnings per 100 notes | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+
+- Time: the model takes 28 s of note decoding for all five difficulties (one batch) and
+  about 25 s for the lights; the whole `generate` run with packaging takes 94 s. The stub
+  takes under 1 s to generate and 12 s end to end.
+- The model's notes needed no repairs: the rules masks kept every hard rule during
+  decoding.
+- 38–49% of its notes are in the outer lanes.
+- Most of its walls are one-lane side walls and short "flick" accents. On Expert+, 24
+  walls reach head height in the centre lanes and make the player move.
 
 ## NJS and offset
 
@@ -51,10 +113,11 @@ the offset still follows the reaction-time target.
 
 ## Install
 
-`--install` copies the map folder into `CustomLevels` (the web UI's "Install to game",
-`POST /api/jobs/{id}/install`, does the same with the folder named `Title - Artist`). It replaces an earlier bsmapper
-install of the same name and never touches a folder some other mapper made (it installs
-next to it as `Name (2)`). Paths come from `~/.bsmapper/config.toml` (or `$BSMAPPER_CONFIG`):
+`--install` copies the map folder into `CustomLevels`. The web UI's "Install to game"
+(`POST /api/jobs/{id}/install`) does the same, with the folder named `Title - Artist`.
+It replaces an earlier bsmapper install of the same name, and it never touches a folder
+another mapper made: it installs next to it as `Name (2)`. Paths come from
+`~/.bsmapper/config.toml` (or `$BSMAPPER_CONFIG`):
 
 ```toml
 [game]

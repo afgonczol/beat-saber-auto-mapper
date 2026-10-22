@@ -1,5 +1,7 @@
 """``PipelineJobRunner``: the real WS7 pipeline behind the server's ``JobRunner`` interface.
 
+By default the pipeline is ``generation.make_pipeline()``: the WS6 model when a checkpoint
+is found (loaded once, on the first job, on CUDA if available), else the stub generator.
 Analysis results are kept per job (a few songs, least recently used dropped), so
 regenerating one difficulty skips the audio analysis. Each job writes its map folder to
 ``work_dir/map`` and the zip next to it; the packaged, lead-in padded ``song.egg`` is what
@@ -12,7 +14,13 @@ import logging
 from collections import OrderedDict
 from pathlib import Path
 
-from bsmapper.generation import GenerateOptions, Pipeline, replace_difficulty, safe_folder_name
+from bsmapper.generation import (
+    GenerateOptions,
+    Pipeline,
+    make_pipeline,
+    replace_difficulty,
+    safe_folder_name,
+)
 from bsmapper.generation.pipeline import (
     MAX_NPS_RATIO,
     RETRY_NPS_RATIO,
@@ -27,7 +35,7 @@ from bsmapper.tokenizer import notes_per_second
 
 log = logging.getLogger(__name__)
 
-STUB_NOTE = "Notes come from the placeholder stub generator, not the ML model (WS6 pending)."
+STUB_NOTE = "Notes come from the placeholder stub generator, not the ML model."
 
 
 def _options(options: JobOptions) -> GenerateOptions:
@@ -54,9 +62,15 @@ class PipelineJobRunner:
     """Runs ``generation.Pipeline`` for server jobs (one at a time, on the worker thread)."""
 
     def __init__(self, pipeline: Pipeline | None = None, max_cached_songs: int = 4) -> None:
-        self.pipeline = pipeline or Pipeline()
+        self._pipeline = pipeline
         self.max_cached_songs = max_cached_songs
         self._songs: OrderedDict[str, Song] = OrderedDict()
+
+    @property
+    def pipeline(self) -> Pipeline:
+        if self._pipeline is None:  # loads the model: on the worker thread, not at startup
+            self._pipeline = make_pipeline()
+        return self._pipeline
 
     # --- JobRunner -------------------------------------------------------------------
 
@@ -66,7 +80,7 @@ class PipelineJobRunner:
         song = self._song(job, refresh=True)
         progress("analyze", 0.1, f"{song.bpm:g} BPM, {song.analysis.duration_s:.0f} s")
         beatmap, results = self.pipeline.build(song, opts, progress)
-        notes = self._notes(song)
+        notes = self._notes(song) + list(self.pipeline.last_notes)
         progress("package", 0.85, "Packaging zip")
         zip_path, egg = self._package(job, song, beatmap)
         progress("package", 1.0, "Done")
@@ -125,7 +139,8 @@ class PipelineJobRunner:
     def _notes(self, song: Song) -> list[str]:
         notes = song_notes(song)
         if getattr(self.pipeline.generator, "name", "") == "stub":
-            notes.insert(0, STUB_NOTE)
+            setup = self.pipeline.setup
+            notes.insert(0, STUB_NOTE + (f" ({setup.reason})" if setup and setup.reason else ""))
         return notes
 
     def _package(self, job: JobInput, song: Song, beatmap: Beatmap) -> tuple[Path, Path]:

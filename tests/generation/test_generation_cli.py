@@ -30,7 +30,13 @@ def fake_pipeline(monkeypatch, tmp_path: Path):
                 zip_path.write_bytes(b"zip")
             return zip_path or map_dir
 
-    monkeypatch.setattr(generation, "Pipeline", FakePipeline)  # what the CLI imports
+    def fake_make_pipeline(generator="auto", lighting="auto", checkpoint=None, device=None, **kw):
+        calls["setup"] = (generator, lighting, checkpoint)
+        pipeline = FakePipeline()
+        pipeline.setup = generation.GeneratorSetup("stub", "rules", None, "test")
+        return pipeline
+
+    monkeypatch.setattr(generation, "make_pipeline", fake_make_pipeline)  # what the CLI imports
     monkeypatch.setenv("BSMAPPER_CONFIG", str(tmp_path / "config.toml"))
     return calls
 
@@ -66,6 +72,8 @@ def test_generate_and_install(fake_pipeline, tmp_path: Path) -> None:
     diffs = [(d.characteristic, d.difficulty) for d in fake_pipeline["beatmap"].difficulties]
     assert (Characteristic.DEGREE_360, Difficulty.EXPERT_PLUS) in diffs and len(diffs) == 4
     assert "Chroma" not in result.output
+    assert "errors/100" in result.output and "stub generator" in result.output
+    assert fake_pipeline["setup"] == ("auto", "auto", None)
 
 
 def test_chroma_warning(fake_pipeline, tmp_path: Path) -> None:

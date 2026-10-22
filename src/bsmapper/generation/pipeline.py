@@ -21,10 +21,12 @@ import logging
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from bsmapper.generation.density import object_flags
 from bsmapper.generation.postprocess import PostReport, postprocess
 from bsmapper.generation.stub import StubGenerator
 from bsmapper.generation.timing import LEAD_IN_EPS_S, map_beat_shift, song_time_analysis
@@ -75,6 +77,14 @@ class GenerateOptions:
     njs: float | None = None  # overrides the per-difficulty NJS table
     environment: str | None = None  # None: picked for the lighting style
     version: FormatVersion = "v3"
+    # "model" needs a pipeline with a light model; "auto" uses it when there is one.
+    lighting_source: str = "auto"
+    # Object types; None = what most human maps of that mode and difficulty use
+    # (``density.object_flags``).
+    bombs: bool | None = None
+    walls: bool | None = None
+    arcs: bool | None = None
+    chains: bool | None = None
 
 
 @dataclass(slots=True)
@@ -120,6 +130,12 @@ class DifficultyResult:
     report: PostReport
     nps: float
     attempts: int = 1
+    seconds: float = 0.0  # generation time (a batch's time is shared out evenly)
+
+    def per_100(self, severity: str) -> float:
+        """Rule issues of ``severity`` per 100 notes after post-processing."""
+        n = sum(i.severity == severity for i in self.report.issues)
+        return 100.0 * n / max(len(self.dmap.notes), 1)
 
 
 @dataclass(slots=True)
@@ -151,7 +167,9 @@ class Pipeline:
 
     ``generator`` defaults to ``StubGenerator`` (not ML; see its module) and ``lighting``
     to WS8's ``RuleLightingGenerator``. Both are swappable, as are the analyzer and the
-    rules checker.
+    rules checker. With ``light_model`` (a WS6 model with a lighting decoder) the lights
+    come from the model (L1) unless the options ask for rules; any failure falls back to
+    the L0 rules. ``runtime.make_pipeline`` picks all of this from a checkpoint.
     """
 
     def __init__(
@@ -160,6 +178,7 @@ class Pipeline:
         *,
         analyzer=None,
         lighting: LightingGenerator | None = None,
+        light_model=None,
         checker: RuleChecker | None = None,
         tracker: str = "auto",
         ffmpeg: str = "ffmpeg",
@@ -169,7 +188,11 @@ class Pipeline:
         self._analyzer = analyzer
         self.tracker = tracker
         self.lighting = lighting
+        self.light_model = light_model
         self.ffmpeg = ffmpeg
+        self.setup = None  # runtime.GeneratorSetup when built by make_pipeline
+        self.last_lighting = ""  # "model" or "rules": what the last build used
+        self.last_notes: list[str] = []  # remarks from the last build (fallbacks)
 
     @property
     def mapper(self) -> str:
@@ -223,18 +246,43 @@ class Pipeline:
         target_nps: float | None = None,
     ) -> DifficultyResult:
         """Generate and post-process one difficulty (not added to ``beatmap``)."""
-        request = GenerationRequest(
-            characteristic=characteristic,
-            difficulty=difficulty,
-            target_nps=target_nps,
-            style=opts.style,
-            njs=opts.njs,
-            seed=opts.seed if seed is None else seed,
-            temperature=opts.temperature if temperature is None else temperature,
-        )
+        request = _request(characteristic, difficulty, opts, seed, temperature, target_nps)
+        start = time.perf_counter()
         raw = self.generator.generate(song.song_analysis, request)
+        res = self._finish(raw, beatmap, opts)
+        res.seconds = time.perf_counter() - start
+        return res
+
+    def _finish(self, raw: DifficultyMap, beatmap: Beatmap, opts) -> DifficultyResult:
         dmap, report = postprocess(raw, beatmap, self.checker, njs=opts.njs)
         return DifficultyResult(dmap, report, notes_per_second(dmap, beatmap))
+
+    def _first_pass(
+        self, song, beatmap, characteristic, diffs, opts, progress, overrides
+    ) -> dict[Difficulty, DifficultyResult]:
+        """Every difficulty once: one batch if the generator decodes batches."""
+        many = getattr(self.generator, "generate_many", None)
+        if many is None or len(diffs) < 2:
+            out = {}
+            for diff in diffs:
+                if progress:
+                    progress(diff)
+                out[diff] = self.generate_difficulty(
+                    song, beatmap, characteristic, diff, opts, **overrides
+                )
+            return out
+        for diff in diffs:
+            if progress:
+                progress(diff)
+        requests = [_request(characteristic, d, opts, **overrides) for d in diffs]
+        start = time.perf_counter()
+        raws = many(song.song_analysis, requests)
+        share = (time.perf_counter() - start) / len(diffs)
+        out = {}
+        for diff, raw in zip(diffs, raws, strict=True):
+            out[diff] = self._finish(raw, beatmap, opts)
+            out[diff].seconds = share
+        return out
 
     def generate_mode(
         self,
@@ -248,12 +296,12 @@ class Pipeline:
     ) -> list[DifficultyResult]:
         """All difficulties of one mode, hardest first, with strictly rising NPS.
         Returned easiest first."""
+        diffs = sorted(set(difficulties), key=lambda d: d.rank, reverse=True)
+        first = self._first_pass(song, beatmap, characteristic, diffs, opts, progress, overrides)
         results: list[DifficultyResult] = []
         harder: DifficultyResult | None = None
-        for diff in sorted(set(difficulties), key=lambda d: d.rank, reverse=True):
-            if progress:
-                progress(diff)
-            res = self.generate_difficulty(song, beatmap, characteristic, diff, opts, **overrides)
+        for diff in diffs:
+            res = first[diff]
             if harder is not None and harder.nps > 0 and res.nps >= MAX_NPS_RATIO * harder.nps:
                 target = RETRY_NPS_RATIO * harder.nps
                 log.info(
@@ -265,18 +313,43 @@ class Pipeline:
                     harder.nps,
                     target,
                 )
+                spent = res.seconds
                 res = self.generate_difficulty(
                     song, beatmap, characteristic, diff, opts, target_nps=target, **overrides
                 )
-                res.attempts = 2
+                res.attempts, res.seconds = 2, res.seconds + spent
             results.append(res)
             harder = res
         return results[::-1]
 
-    def light(self, song: Song, beatmap: Beatmap, opts: GenerateOptions) -> None:
-        from bsmapper.lighting import RuleLightingGenerator, light_beatmap
+    def light(self, song: Song, beatmap: Beatmap, opts: GenerateOptions) -> tuple[str, str | None]:
+        """Light ``beatmap``. Returns the source used ("model"/"rules") and a fallback note."""
+        from bsmapper.lighting import RuleLightingGenerator
 
-        generator = self.lighting or RuleLightingGenerator(time_offset_s=song.lead_in_s)
+        source = opts.lighting_source
+        if source == "model" and self.light_model is None:
+            raise ValueError("lighting_source='model' needs a pipeline with a light model")
+        note = None
+        if self.light_model is not None and source in ("auto", "model"):
+            from bsmapper.generation.lighting import ModelLightingGenerator
+
+            model_gen = ModelLightingGenerator(
+                self.light_model, time_offset_s=song.lead_in_s, seed=opts.seed
+            )
+            try:
+                self._light_with(model_gen, song, beatmap, opts)
+                return "model", None
+            except Exception as exc:  # any model failure: the L0 rules still light the map
+                log.warning("model lighting failed (%s); using the rule lightshow", exc)
+                note = f"Model lighting failed ({exc}); used the rule-based lightshow."
+        rules = self.lighting or RuleLightingGenerator(time_offset_s=song.lead_in_s)
+        self._light_with(rules, song, beatmap, opts)
+        return "rules", note
+
+    @staticmethod
+    def _light_with(generator, song: Song, beatmap: Beatmap, opts: GenerateOptions) -> None:
+        from bsmapper.lighting import light_beatmap
+
         light_beatmap(
             beatmap, song.analysis, opts.lighting, environment=opts.environment, generator=generator
         )
@@ -329,7 +402,8 @@ class Pipeline:
         beatmap.difficulties = [r.dmap for r in results]
         progress("rules", 0.72, _rules_message(results))
         progress("lighting", 0.75, f"Lighting ({opts.lighting})")
-        self.light(song, beatmap, opts)
+        self.last_lighting, note = self.light(song, beatmap, opts)
+        self.last_notes = [note] if note else []
         return beatmap, results
 
     def song_beatmap(self, song: Song) -> Beatmap:
@@ -350,6 +424,7 @@ class Pipeline:
         notes = song_notes(song)
         progress("analyze", 0.1, f"{song.bpm:g} BPM, {song.analysis.duration_s:.0f} s")
         beatmap, results = self.build(song, opts, progress)
+        notes += self.last_notes
         notes += [n for r in results if (n := _difficulty_note(r))]
 
         progress("package", 0.85, "Packaging")
@@ -359,6 +434,28 @@ class Pipeline:
         self.package(song, beatmap, map_dir, zip_path, opts.version)
         progress("package", 1.0, "Done")
         return PipelineResult(beatmap, song, results, map_dir, zip_path, notes)
+
+
+def _request(characteristic, difficulty, opts, seed=None, temperature=None, target_nps=None):
+    flags = object_flags(difficulty, characteristic)
+    for key, value in (
+        ("allow_bombs", opts.bombs),
+        ("allow_obstacles", opts.walls),
+        ("allow_arcs", opts.arcs),
+        ("allow_chains", opts.chains),
+    ):
+        if value is not None:
+            flags[key] = value
+    return GenerationRequest(
+        characteristic=characteristic,
+        difficulty=difficulty,
+        target_nps=target_nps,
+        style=opts.style,
+        njs=opts.njs,
+        seed=opts.seed if seed is None else seed,
+        temperature=opts.temperature if temperature is None else temperature,
+        **flags,
+    )
 
 
 def song_notes(song: Song) -> list[str]:

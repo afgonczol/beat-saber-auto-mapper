@@ -1,38 +1,45 @@
-"""``ModelGenerator``: windowed autoregressive decoding for the WS6 note model.
+"""``ModelGenerator``: notes from the WS6 note model, decoded under the WS5 rules.
 
-The model itself is not here yet. This module is the decoding loop that will drive it,
-written against a small ``NoteSampler`` protocol so WS6 only has to implement two
-methods (encode one window of audio, return next-token logits):
+    generator = ModelGenerator(load_model("checkpoints/note_v0/best.pt", device="cuda"))
+    dmaps = generator.generate_many(song_analysis, requests)   # one batch per mode
 
-    for each 16-beat window k:
-        ids = BOS prefix context SEP              # tokenizer.Conditioning + tail_context
-        until EOS:
-            logits = sampler.next_logits(memory, ids)
-            mask   = grammar mask                  # NOTE_GRAMMAR.parser().allowed_mask()
-                   & request mask                  # no bombs / walls / ... if disallowed
-                   & rules mask                    # bsmapper.rules MapState at this tick
-            logits += density bias                 # towards request.target_nps
-            sample with temperature / top-p / seeded RNG, feed parser and rules state
-    tokenizer.MapTokenizer().decode(windows)
+Decoding is WS6's ``NoteSampler``: 16-beat windows, the previous window's tail as context,
+grammar masks, temperature / top-p / seed and classifier-free guidance on STYLE. This
+module adds what generation needs on top:
 
-Every complete object is added to the ``MapState`` as soon as the parser emits it, so
-the masks always reflect what has been placed (WS5's incremental API).
+- **conditioning**: ``Conditioning.from_request``; a request without ``target_nps`` gets
+  the per-difficulty heuristic from ``density``, scaled by ``NPS_CONDITIONING_GAIN``
+  (the v0 model undershoots what it is conditioned on).
+- **request mask**: object types the request forbids (bombs, walls, arcs, chains),
+  red notes in One Saber, arrows in No Arrows, rotations outside 90/360.
+- **rules mask** (``mask_fn``): one ``bsmapper.rules.MapState`` per sequence, fed every
+  object as soon as the parser completes it. Before each token, note/bomb heads, cells
+  and directions that would break a hard rule at the current tick are masked out.
+- **features**: the song-time analysis resampled onto the map's tempo map with WS3b's
+  ``map_grid_features``, exactly the layout the model was trained on.
+
+The torch-dependent parts import lazily, so the stub path never needs the ``ml`` extra.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from bsmapper.generation.density import NPS_CONDITIONING_GAIN, target_nps
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.generation.timing import tempo_beatmap
 from bsmapper.interfaces import AudioAnalysis, GenerationRequest
 from bsmapper.rules import MapState, RuleChecker
 from bsmapper.schema import (
+    GRID_COLUMNS,
+    GRID_ROWS,
+    Beatmap,
+    Bomb,
     Characteristic,
     Color,
     CutDirection,
@@ -41,89 +48,51 @@ from bsmapper.schema import (
     RotationEvent,
 )
 from bsmapper.tokenizer import (
-    BOS,
-    EOS,
     NOTE_GRAMMAR,
     NOTE_VOCAB,
-    SEP,
     TICKS_PER_BEAT,
-    WINDOW_BEATS,
     WINDOW_TICKS,
     Conditioning,
     MapTokenizer,
     Parser,
-    TokenWindow,
     events_to_map,
-    tail_context,
 )
 
+if TYPE_CHECKING:
+    from bsmapper.models import MapperModel, StepState
 
-class NoteSampler(Protocol):
-    """What the WS6 note model provides to ``ModelGenerator``."""
-
-    def encode(self, analysis: AudioAnalysis, start_beat: float, n_beats: int) -> Any:
-        """Encode the audio of one window (map beats ``start_beat`` .. ``+ n_beats``).
-
-        ``analysis`` is in song time: row ``j`` of ``beat_features`` is map beat j / 24.
-        The return value is opaque to the decoder and passed back to ``next_logits``.
-        """
-        ...
-
-    def next_logits(self, memory: Any, input_ids: Sequence[int]) -> np.ndarray:
-        """Logits over ``NOTE_VOCAB`` for the token after ``input_ids``
-        (``BOS prefix context SEP body...``, as in ``TokenWindow.input_ids``)."""
-        ...
+ROTATING = (Characteristic.DEGREE_90, Characteristic.DEGREE_360)
 
 
 @dataclass(frozen=True, slots=True)
-class SamplingConfig:
+class ModelSettings:
     top_p: float = 0.95
-    max_tokens_per_window: int = 1024
-    context_events: int = 16
+    style_guidance: float = 1.5  # classifier-free guidance on STYLE (1 = off)
     rule_masks: bool = True
-    # Logit bias on note heads per unit of tanh((expected - placed notes) / scale).
-    density_gain: float = 2.0
-    density_scale: float = 4.0
+    context_events: int = 16
+    max_body_tokens: int = 1024
 
 
-@dataclass(slots=True)
-class DecodeStats:
-    windows: int = 0
-    tokens: int = 0
-    forced_ends: int = 0  # windows cut at max_tokens_per_window
-    rule_masked_steps: int = 0  # steps where the rules removed at least one option
-    fallback_steps: int = 0  # steps where the rules left nothing and were ignored
+def song_features(
+    analysis: AudioAnalysis, beatmap: Beatmap, time_offset_s: float = 0.0
+) -> np.ndarray:
+    """(n_windows * 384, 83) model input: ``analysis`` frames on ``beatmap``'s tempo map.
+
+    ``time_offset_s`` is silence prepended to ``analysis``'s audio in the packaged song
+    (0 for a song-time analysis, ``lead_in_s`` for the original one).
+    """
+    from bsmapper.data.mapgrid import MapTiming, audio_windows, map_grid_features
+
+    timing = MapTiming(beatmap.bpm, tuple(beatmap.bpm_changes), -time_offset_s)
+    n_windows = audio_windows(timing, analysis.duration_s)
+    feats = map_grid_features(
+        analysis.features, analysis.frame_rate, timing, analysis.duration_s, n_windows
+    )
+    return feats.astype(np.float32)
 
 
-def sample_token(
-    logits: np.ndarray,
-    mask: np.ndarray,
-    rng: np.random.Generator,
-    temperature: float = 1.0,
-    top_p: float = 1.0,
-) -> int:
-    """Sample one id from ``logits`` restricted to ``mask``, with temperature and top-p."""
-    allowed = np.flatnonzero(mask)
-    if len(allowed) == 0:
-        raise ValueError("no token is allowed")
-    if temperature <= 1e-6:
-        return int(allowed[np.argmax(logits[allowed])])
-    z = logits[allowed].astype(np.float64) / temperature
-    z -= z.max()
-    p = np.exp(z)
-    p /= p.sum()
-    if top_p < 1.0:
-        order = np.argsort(-p, kind="stable")
-        cum = np.cumsum(p[order])
-        keep = order[: int(np.searchsorted(cum, top_p) + 1)]
-        q = np.zeros_like(p)
-        q[keep] = p[keep]
-        p = q / q.sum()
-    return int(allowed[rng.choice(len(allowed), p=p)])
-
-
-class _Masks:
-    """Static token-id sets used to build the per-step masks."""
+class _Vocab:
+    """Token ids used by the request and rules masks."""
 
     def __init__(self) -> None:
         v = NOTE_VOCAB
@@ -137,214 +106,221 @@ class _Masks:
         self.arc = v.id("ARC")
         self.chain = v.id("CHAIN")
 
-    def request_mask(self, request: GenerationRequest) -> np.ndarray:
-        """Tokens the request rules out entirely (object types, colours, directions)."""
-        m = np.ones(self.size, dtype=bool)
-        mode = request.characteristic
-        if mode == Characteristic.LIGHTSHOW:
-            m[[*self.note_heads.values(), self.bomb, self.wall, self.arc, self.chain]] = False
-        if not request.allow_bombs:
-            m[self.bomb] = False
-        if not request.allow_obstacles:
-            m[self.wall] = False
-        if not request.allow_arcs:
-            m[self.arc] = False
-        if not request.allow_chains:
-            m[self.chain] = False
-        if mode == Characteristic.ONE_SABER:
-            m[self.note_heads[Color.RED]] = False
-        if mode not in (Characteristic.DEGREE_90, Characteristic.DEGREE_360):
-            m[list(self.rot.values())] = False
-        return m
+
+_V = _Vocab()
+
+
+def request_mask(request: GenerationRequest) -> np.ndarray:
+    """Tokens the request rules out entirely (object types, colours, rotations)."""
+    m = np.ones(_V.size, dtype=bool)
+    mode = request.characteristic
+    if mode == Characteristic.LIGHTSHOW:
+        m[[*_V.note_heads.values(), _V.bomb, _V.wall, _V.arc, _V.chain]] = False
+    for allowed, token in (
+        (request.allow_bombs, _V.bomb),
+        (request.allow_obstacles, _V.wall),
+        (request.allow_arcs, _V.arc),
+        (request.allow_chains, _V.chain),
+    ):
+        if not allowed:
+            m[token] = False
+    if mode == Characteristic.ONE_SABER:
+        m[_V.note_heads[Color.RED]] = False
+    if mode == Characteristic.NO_ARROWS:
+        m[_V.arc] = m[_V.chain] = False
+    if mode not in ROTATING:
+        m[list(_V.rot.values())] = False
+    return m
+
+
+class RuleMasker:
+    """``mask_fn`` / ``on_window`` for ``NoteSampler``: request and rules masks per sequence."""
+
+    def __init__(
+        self,
+        requests: Sequence[GenerationRequest],
+        metas: Sequence[DifficultyMap],
+        beatmap: Beatmap,
+        checker: RuleChecker,
+        rules: bool = True,
+    ) -> None:
+        self.requests = list(requests)
+        self.static = [request_mask(r) for r in requests]
+        self.states = [checker.state(m, beatmap) for m in metas]
+        self.rules = rules
+        self._seen: list[tuple[int, int]] = [(0, 0)] * len(requests)  # (window, events fed)
+        self._cache: dict[tuple, bool] = {}
+        self.masked_steps = 0
+
+    # --- NoteSampler callbacks ------------------------------------------------------
+
+    def mask(self, step: StepState) -> np.ndarray:
+        b = step.sequence
+        self._sync(b, step.window, step.parser.events)
+        mask = self.static[b].copy()
+        if self.rules:
+            ruled = mask & self._rules(b, step.parser, step.window * WINDOW_TICKS)
+            if ruled.any() and not np.array_equal(ruled, mask):
+                self.masked_steps += 1
+                mask = ruled
+        return mask
+
+    def on_window(self, k: int, bodies: list[list[int]]) -> None:
+        """Feed what each window's last token completed (a note waiting for ANGLE)."""
+        for b, body in enumerate(bodies):
+            self._sync(b, k, NOTE_GRAMMAR.parse(body))
+            self._seen[b] = (k + 1, 0)
+
+    # --- internals ------------------------------------------------------------------
+
+    def _sync(self, b: int, window: int, events) -> None:
+        seen_window, fed = self._seen[b]
+        if seen_window != window:
+            fed = 0
+        state, req = self.states[b], self.requests[b]
+        for event in events[fed:]:
+            dmap = events_to_map(
+                [(window * WINDOW_TICKS + event.tick, event)], req.characteristic, req.difficulty
+            )
+            for group in (dmap.rotations, dmap.obstacles, dmap.bombs, dmap.notes):
+                for obj in group:
+                    if obj.beat >= state.last_beat - 1e-4:
+                        state.add(obj)
+        self._seen[b] = (window, len(events))
+
+    def _rules(self, b: int, parser: Parser, start_tick: int) -> np.ndarray:
+        mask = np.ones(_V.size, dtype=bool)
+        if parser.time is None:
+            return mask
+        state = self.states[b]
+        beat = (start_tick + parser.time) / TICKS_PER_BEAT
+        partial = parser.partial
+        dots = self.requests[b].characteristic == Characteristic.NO_ARROWS
+        if partial is None or not parser.in_object:
+            for color, token in _V.note_heads.items():
+                mask[token] = self._any_note(b, state, beat, color, None, dots)
+            mask[_V.bomb] = any(
+                state.allowed(Bomb(beat, x, y))
+                for x in range(GRID_COLUMNS)
+                for y in range(GRID_ROWS)
+            )
+            for degrees, token in _V.rot.items():
+                mask[token] = state.allowed(RotationEvent(beat, degrees))
+            return mask
+        kind, head, values = partial
+        if kind == "NOTE" and len(values) == 0:
+            for cell, token in _V.pos.items():
+                mask[token] = self._any_note(b, state, beat, head, cell, dots)
+        elif kind == "NOTE" and len(values) == 1:
+            x, y = values[0]
+            for d, token in _V.dirs.items():
+                ok = not dots or d == CutDirection.ANY
+                mask[token] = ok and state.allowed(Note(beat, x, y, head, d))
+        elif kind == "BOMB" and len(values) == 0:
+            for (x, y), token in _V.pos.items():
+                mask[token] = state.allowed(Bomb(beat, x, y))
+        return mask
+
+    def _any_note(self, b, state: MapState, beat, color, cell, dots: bool) -> bool:
+        """Is any note of ``color`` (in ``cell``, if given) allowed? Cached per state."""
+        key = (b, beat, color, cell, len(state.notes), len(state.bombs), state.last_beat)
+        hit = self._cache.get(key)
+        if hit is None:
+            if len(self._cache) > 4096:
+                self._cache.clear()
+            cells = (
+                [cell] if cell else [(x, y) for y in range(GRID_ROWS) for x in range(GRID_COLUMNS)]
+            )
+            dirs = [CutDirection.ANY] if dots else list(CutDirection)
+            hit = any(state.allowed(Note(beat, x, y, color, d)) for x, y in cells for d in dirs)
+            self._cache[key] = hit
+        return hit
 
 
 class ModelGenerator:
-    """``NoteGenerator`` that decodes a ``NoteSampler`` window by window.
+    """``NoteGenerator`` on the WS6 note model. Expects a song-time analysis (``timing``).
 
-    Without a sampler (until WS6 lands) ``generate`` raises; the pipeline uses
-    ``StubGenerator`` instead. Expects a song-time analysis (``timing``).
+    ``generate_many`` decodes several requests over the same song as one batch (the
+    pipeline sends all difficulties of a mode together). Requests are grouped by seed and
+    temperature, since a batch shares its sampling options.
     """
 
     name = "model"
 
     def __init__(
         self,
-        sampler: NoteSampler | None = None,
-        sampling: SamplingConfig | None = None,
+        model: MapperModel,
+        settings: ModelSettings | None = None,
         checker: RuleChecker | None = None,
     ) -> None:
-        self.sampler = sampler
-        self.sampling = sampling or SamplingConfig()
+        self.model = model
+        self.settings = settings or ModelSettings()
         self.checker = checker or RuleChecker()
-        self.tokenizer = MapTokenizer(context_events=self.sampling.context_events)
-        self._masks = _Masks()
-        self.last_stats = DecodeStats()
-        self._note_masks: dict[tuple, np.ndarray] = {}
+        self.tokenizer = MapTokenizer(context_events=self.settings.context_events)
+        self.last_masked_steps = 0
 
     def generate(self, analysis: AudioAnalysis, request: GenerationRequest) -> DifficultyMap:
-        if self.sampler is None:
-            raise RuntimeError(
-                "ModelGenerator has no note model yet (WS6); use StubGenerator for now"
-            )
+        return self.generate_many(analysis, [request])[0]
+
+    def generate_many(
+        self, analysis: AudioAnalysis, requests: Sequence[GenerationRequest]
+    ) -> list[DifficultyMap]:
         beatmap = tempo_beatmap(analysis)
-        njs, offset = njs_and_offset(request.difficulty, beatmap.bpm, request.njs)
-        meta = DifficultyMap(request.characteristic, request.difficulty, njs=njs, njs_offset=offset)
-        state = self.checker.state(meta, beatmap)
-        mode_index = list(Characteristic).index(request.characteristic)
-        rng = np.random.default_rng([request.seed, mode_index, request.difficulty.rank])
-        prefix = Conditioning.from_request(request).prefix_ids()
-        static = self._masks.request_mask(request)
-        stats = self.last_stats = DecodeStats()
+        requests = [self._with_nps(r, beatmap.bpm) for r in requests]
+        groups: dict[tuple[int, float], list[int]] = {}
+        for i, r in enumerate(requests):
+            groups.setdefault((r.seed, r.temperature), []).append(i)
+        feats = song_features(analysis, beatmap)
+        out: list[DifficultyMap | None] = [None] * len(requests)
+        self.last_masked_steps = 0
+        for (seed, temperature), idx in groups.items():
+            dmaps = self._decode(feats, beatmap, [requests[i] for i in idx], seed, temperature)
+            for i, dmap in zip(idx, dmaps, strict=True):
+                out[i] = dmap
+        return out  # type: ignore[return-value]
 
-        n_windows = max(1, math.ceil(len(analysis.beat_times) / WINDOW_BEATS))
-        windows: list[TokenWindow] = []
-        prev_body: list[int] = []
-        for k in range(n_windows):
-            context = tail_context(prev_body, NOTE_GRAMMAR, self.sampling.context_events)
-            memory = self.sampler.encode(analysis, k * WINDOW_BEATS, WINDOW_BEATS)
-            body = self._decode_window(
-                k, memory, prefix, context, static, state, request, rng, stats
-            )
-            windows.append(TokenWindow(k, body, context, list(prefix)))
-            prev_body = body
-        stats.windows = len(windows)
-        return self.tokenizer.decode(windows, meta=meta)
+    @staticmethod
+    def _with_nps(request: GenerationRequest, bpm: float) -> GenerationRequest:
+        if request.target_nps is not None:
+            return request
+        nps = target_nps(request.difficulty, request.characteristic, bpm)
+        return replace(request, target_nps=round(nps * NPS_CONDITIONING_GAIN, 2))
 
-    # --- one window -------------------------------------------------------------------
-
-    def _decode_window(
+    def _decode(
         self,
-        k: int,
-        memory: Any,
-        prefix: list[int],
-        context: list[int],
-        static: np.ndarray,
-        state: MapState,
-        request: GenerationRequest,
-        rng: np.random.Generator,
-        stats: DecodeStats,
-    ) -> list[int]:
-        cfg = self.sampling
-        ids = [BOS, *prefix, *context, SEP]
-        body: list[int] = []
-        parser = NOTE_GRAMMAR.parser()
-        start_tick = k * WINDOW_TICKS
-        obj_start = 0  # body index where the object being read started
-        self._note_masks.clear()
-        for _ in range(cfg.max_tokens_per_window):
-            mask = parser.allowed_mask() & static
-            if cfg.rule_masks:
-                ruled = mask & self._rules_mask(parser, state, start_tick, request)
-                if not ruled.any():
-                    stats.fallback_steps += 1
-                elif (ruled != mask).any():
-                    stats.rule_masked_steps += 1
-                    mask = ruled
-            if not mask.any():  # only possible inside an object the request forbids
-                break
-            logits = np.asarray(self.sampler.next_logits(memory, ids), dtype=np.float64)
-            logits = logits + self._density_bias(parser, state, start_tick, request)
-            token = sample_token(logits, mask, rng, request.temperature, cfg.top_p)
-            stats.tokens += 1
-            if token == EOS:
-                break
-            if not parser.in_object:
-                obj_start = len(body)
-            for event in parser.feed(token):
-                self._commit(state, start_tick + event.tick, event, request)
-            ids.append(token)
-            body.append(token)
-        else:
-            stats.forced_ends += 1
-        if parser.in_object:  # cut off mid-object: drop the unfinished object
-            return body[:obj_start]
-        return self._close(parser, body, state, start_tick, request)
+        feats: np.ndarray,
+        beatmap: Beatmap,
+        requests: list[GenerationRequest],
+        seed: int,
+        temperature: float,
+    ) -> list[DifficultyMap]:
+        from bsmapper.models import NoteSampler, SamplingOptions
 
-    def _close(
-        self,
-        parser: Parser,
-        body: list[int],
-        state: MapState,
-        start_tick: int,
-        request: GenerationRequest,
-    ) -> list[int]:
-        """End the window: flush an object still waiting for an optional modifier."""
-        before = len(parser.events)
-        for event in parser.finish()[before:]:
-            self._commit(state, start_tick + event.tick, event, request)
-        return body
+        s = self.settings
+        metas = []
+        for r in requests:
+            njs, offset = njs_and_offset(r.difficulty, beatmap.bpm, r.njs)
+            metas.append(DifficultyMap(r.characteristic, r.difficulty, njs=njs, njs_offset=offset))
+        masker = RuleMasker(requests, metas, beatmap, self.checker, rules=s.rule_masks)
+        options = SamplingOptions(
+            temperature=temperature,
+            top_p=s.top_p,
+            seed=seed,
+            style_guidance=s.style_guidance,
+            context_events=s.context_events,
+            max_body_tokens=s.max_body_tokens,
+        )
+        conds = [Conditioning.from_request(r) for r in requests]
+        n_windows = max(1, math.ceil(feats.shape[0] / WINDOW_TICKS))
+        sampler = NoteSampler(self.model)
+        callbacks = {"mask_fn": masker.mask, "on_window": masker.on_window}
+        windows = sampler.generate(feats, conds, options, n_windows=n_windows, **callbacks)
+        self.last_masked_steps += masker.masked_steps
+        return [self.tokenizer.decode(w, meta=m) for w, m in zip(windows, metas, strict=True)]
 
-    def _commit(self, state: MapState, tick: int, event, request: GenerationRequest) -> None:
-        """Feed an emitted event to the rules state (walls/arcs/chains included)."""
-        dmap = events_to_map([(tick, event)], request.characteristic, request.difficulty)
-        for group in (dmap.rotations, dmap.obstacles, dmap.bombs, dmap.notes):
-            for obj in group:
-                if obj.beat >= state.last_beat - 1e-4:
-                    state.add(obj)
 
-    # --- masks and bias ------------------------------------------------------------------
-
-    def _rules_mask(
-        self, parser: Parser, state: MapState, start_tick: int, request: GenerationRequest
-    ) -> np.ndarray:
-        m = self._masks
-        mask = np.ones(m.size, dtype=bool)
-        if parser.time is None:
-            return mask
-        beat = (start_tick + parser.time) / TICKS_PER_BEAT
-        partial = parser.partial
-        if partial is None or not parser.in_object:
-            # Between objects: a head may only start if something of it can be placed.
-            for color, tok in m.note_heads.items():
-                mask[tok] = bool(self._note_mask(state, beat, color).any())
-            mask[m.bomb] = bool(state.bomb_mask(beat).any())
-            for degrees, tok in m.rot.items():
-                mask[tok] = state.allowed(RotationEvent(beat, degrees))
-            return mask
-        kind, head, values = partial
-        if kind == "NOTE":
-            cells = self._note_mask(state, beat, head)
-            if len(values) == 0:
-                for (x, y), tok in m.pos.items():
-                    mask[tok] = bool(cells[x, y].any())
-            elif len(values) == 1:
-                x, y = values[0]
-                for d, tok in m.dirs.items():
-                    ok = bool(cells[x, y, d])
-                    if request.characteristic == Characteristic.NO_ARROWS:
-                        ok = ok and d == CutDirection.ANY
-                    mask[tok] = ok
-        elif kind == "BOMB" and len(values) == 0:
-            cells = state.bomb_mask(beat)
-            for (x, y), tok in m.pos.items():
-                mask[tok] = bool(cells[x, y])
-        return mask
-
-    def _note_mask(self, state: MapState, beat: float, color: Color) -> np.ndarray:
-        """``state.note_mask``, cached until the state changes."""
-        key = (beat, color, len(state.notes), len(state.bombs), state.last_beat)
-        mask = self._note_masks.get(key)
-        if mask is None:
-            if len(self._note_masks) > 64:
-                self._note_masks.clear()
-            mask = self._note_masks[key] = state.note_mask(beat, color)
-        return mask
-
-    def _density_bias(
-        self, parser: Parser, state: MapState, start_tick: int, request: GenerationRequest
-    ) -> np.ndarray:
-        """Push note heads up when behind ``target_nps``, down when ahead of it."""
-        bias = np.zeros(self._masks.size)
-        cfg = self.sampling
-        if request.target_nps is None or cfg.density_gain == 0 or parser.time is None:
-            return bias
-        if parser.in_object:
-            return bias
-        beat = (start_tick + parser.time) / TICKS_PER_BEAT
-        notes: list[Note] = state.notes
-        first = notes[0].beat if notes else beat
-        elapsed = state.seconds(beat) - state.seconds(first)
-        deficit = request.target_nps * elapsed - len(notes)
-        push = cfg.density_gain * math.tanh(deficit / cfg.density_scale)
-        bias[list(self._masks.note_heads.values())] = push
-        return bias
+def describe(model: Any) -> str:
+    """A short description of a loaded model for logs."""
+    n = sum(p.numel() for p in model.parameters())
+    device = next(model.parameters()).device
+    return f"{n / 1e6:.1f}M params on {device}"
