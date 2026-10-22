@@ -155,6 +155,7 @@ per-query cursors is moved to `state/` the first time its own query runs again.
 | 2026-10-19 | 500 | 392 | 3.4 GB | First acceptance run with the default filters, hard-killed twice and resumed. Rejected: 65 maps for mods. Lowest rating 0.968, fewest votes 156. |
 | 2026-10-20 | 2000 | 1405 | 13.4 GB | **Dataset v0.** Resumed from the 500 above with `--limit 2000 --max-gb 15`. 1500 new maps in 15 min, 0 failed. Rejected: 173 maps for mods. Lowest rating 0.955, fewest votes 91. |
 | 2026-10-20 | 2712 | 1740 | 17.8 GB | **Rare-mode top-up** of v0 (see below). 712 new maps in 9 min, 1 failed. Both pools ran out. |
+| 2026-10-22 | 10001 | 4949 | 64.9 GB | **Dataset v1** (see below). Same filters as v0, no relaxation. 7289 new maps in 70 min, 1 failed (the same broken zip as before). Rejected: 682 maps for mods, 1 for duration. |
 
 Note for the dataset builder (WS3b): the top of the rating list is mostly BeatSaver-curated
 maps (391 of 500), so at this size `beatsaver_curated` alone tags most maps as gold. Ranked
@@ -268,6 +269,87 @@ checkout with BeatLeader ratings on. Both ran until their pool was exhausted.
 90Degree is still small (141 difficulties), and the rare modes lean toward Expert and
 ExpertPlus even more than Standard does. Relaxing the filters further would add few maps
 (see the pool table), so WS6 should rely on oversampling and on the shared model.
+
+#### Dataset v1 (2026-10-22, 10001 maps)
+
+Why: note_v0, trained on v0, plateaued at val loss 1.563 while train loss kept falling, so
+it was overfitting on about 2k songs. v1 grows `data/raw` from 2712 to about 10k maps.
+
+The commands ran in the main checkout on `a33a7e3`, one after another because they share
+the manifest, with BeatLeader ratings on:
+
+```bash
+bsmapper data scrape --out data/raw --limit 10000 --max-gb 78
+bsmapper data scrape --out data/raw --characteristics 360Degree,90Degree --min-score 0.7 --min-votes 10 --since 2019-12-01 --limit 100000 --max-gb 78
+bsmapper data scrape --out data/raw --characteristics OneSaber --min-score 0.7 --min-votes 10 --limit 100000 --max-gb 78
+```
+
+- **Filters: unchanged.** The main query keeps score ≥ 0.75, ≥ 30 votes, uploaded since
+  2021-01-01 and 30 s – 10 min. Its pool on 2026-10-22 was 23,805 maps, roughly 22k after
+  the client-side mods check, so 10k did not need any relaxation. For reference, relaxing
+  would have added 28,621 maps at ≥ 20 votes, 24,497 at score ≥ 0.70, and 30,933 with
+  uploads since 2020.
+- **Main run:** it resumed at page 21, continuing the v0 cursor (the old `state.json` was
+  moved into `state/`). It stopped at the 10,000 limit at page 101. There is still plenty
+  of pool left for a later v2.
+  - New maps have a median score of 0.937 (10th percentile 0.924, lowest 0.854).
+  - BeatSaver's "Rating" order is not a plain sort by score, so a few lower-scored maps
+    with few votes come early.
+- **Rare-mode rescans:** both cursors had been marked `exhausted` on 2026-10-20, and
+  `exhausted` sticks, so a plain rerun stops at once. Their two state files were moved to
+  `state/old-v0/` so the queries could scan again from page 0. That added 1 new map; the
+  1 failure was `7ab0`, a broken zip that failed on 10-20 too. The rare pools are fully
+  covered.
+- **Gold:** 4949 maps (4818 `beatsaver_curated`, 349 `beatleader_ranked`, 282
+  `scoresaber_ranked`). 499 maps are ranked on at least one leaderboard.
+- **Filters met:** 9672 maps pass the main filters. The other 329 came in through the
+  rare-mode queries: 195 are older than 2021, 106 have fewer than 30 votes and 28 have a
+  score below 0.75.
+- **Upload year:**
+
+  | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+  |---|---|---|---|---|---|---|---|
+  | 26 | 183 | 2262 | 2905 | 2380 | 1631 | 413 | 201 |
+
+- **Disk:**
+  - 64.9 GB of zips, 7.0 MB per map on average; the run added 47.2 GB.
+  - Cache: 40 MB. All of `data/raw` is 66 GB.
+  - G: had 235 GB free afterwards.
+- **Difficulties:** 26,247 in total, rows are characteristics:
+
+  | Characteristic | Maps | Easy | Normal | Hard | Expert | ExpertPlus | Total |
+  |---|---|---|---|---|---|---|---|
+  | Standard | 9863 | 1854 | 2418 | 4719 | 6583 | 7993 | 23567 |
+  | OneSaber | 429 | 46 | 74 | 117 | 203 | 300 | 740 |
+  | Lawless | 446 | 34 | 33 | 55 | 128 | 385 | 635 |
+  | Lightshow | 526 | 184 | 31 | 14 | 43 | 283 | 555 |
+  | 360Degree | 331 | 20 | 21 | 38 | 138 | 205 | 422 |
+  | 90Degree | 110 | 7 | 9 | 28 | 43 | 54 | 141 |
+  | NoArrows | 52 | 30 | 21 | 27 | 28 | 22 | 128 |
+  | Legacy | 38 | 1 | 1 | 7 | 17 | 33 | 59 |
+  | **All** | 10001 | 2176 | 2608 | 5005 | 7183 | 9275 | 26247 |
+
+- **BeatLeader ratings:**
+  - All 10001 maps were looked up (`beatleader_at` is set on every entry).
+  - 25,828 of the 26,247 difficulties have a `tech_rating`.
+
+    | Characteristic | With `tech_rating` |
+    |---|---|
+    | Standard | 23,492 of 23,567 |
+    | OneSaber | 737 of 740 |
+    | 360Degree | 421 of 422 |
+    | 90Degree | 140 of 141 |
+    | Lightshow | 223 of 555 |
+
+  - Only 3 maps (`14ac9`, `22025`, `53b1e`) have no rating at all.
+  - Status: 25,079 unranked (AI-rated), 1062 ranked, 92 unrankable, 10 nominated,
+    4 outdated.
+  - Standard `tech_rating` quartiles: 1.97 / 3.17 / 4.47, ranging from 0 to 13.4.
+
+Compared with v0, Standard grew about 4.2× (5589 → 23567 difficulties). The rare modes did
+not grow, because their pools were already exhausted. Easy and Normal are still the
+thinnest Standard difficulties (1854 and 2418). `data/processed` has **not** been rebuilt
+yet; that is a separate `bsmapper data build` step.
 
 ## Processed dataset: `bsmapper data build` (WS3b)
 
