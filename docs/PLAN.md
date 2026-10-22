@@ -256,6 +256,20 @@ code changes.
 | M7 | Web UI | Upload → preview → download/install works locally |
 | M8 | Release | Weights hosted on Hugging Face (`bsmapper download-model`), a Windows install guide, a model card, and a tagged v0.1.0 |
 
+### Status (2026-10-22)
+
+| # | State | Notes |
+|---|---|---|
+| M0 | ✅ done | CI workflow written but not pushed (the gh token lacks the `workflow` scope) |
+| M1 | ✅ done | PRs #14–#16, #19, #22 |
+| M2 | 🟡 v0 done, v1 in progress | v0: 2,448 maps / 7,526 difficulties / 25.9M note tokens (#24). v1 scrape to ~10k maps running |
+| M3 | 🟡 trained, not evaluated | `note_v0` (88.6M params, 60k steps): val note loss 1.563, acc 0.773, mild overfit. WS10 eval (#11) next |
+| M4 | 🟡 stub only | Pipeline + `generate --install` merged (#25, #26); the stub map loads in-game. Wiring `note_v0` into ModelGenerator (WS7, on ws/7-model-generator) |
+| M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28) awaits an in-game recheck. ML lighting decoder trained (val loss 1.78); integration with WS7 |
+| M6 | ⬜ not started | Rare-mode data topped up (#18); the model is conditioned on all characteristics. WS6b (#12) |
+| M7 | 🟡 mostly done | UI shell (#21), real pipeline + install button (#25, #26) |
+| M8 | ⬜ not started | |
+
 ## 7. Splitting work between agents
 
 ### Principles
