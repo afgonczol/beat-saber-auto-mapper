@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from bsmapper.generation.intensity import checker_for, nps_ratio, percentile
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.generation.timing import seconds_to_beats, tempo_beatmap
 from bsmapper.interfaces import AudioAnalysis, GenerationRequest
@@ -157,10 +158,10 @@ class StubGenerator:
         tech = DEFAULT_STYLE if request.style is None else float(np.clip(request.style, 0, 1))
         target_nps = request.target_nps or self.default_nps(
             request.difficulty, request.characteristic, beatmap.bpm
-        )
+        ) * nps_ratio(request.difficulty, percentile(request.intensity))
 
         times = self._select_times(analysis, profile, target_nps, tech, temperature, rng)
-        state = self.checker.state(dmap, beatmap)
+        state = checker_for(self.checker, request.intensity).state(dmap, beatmap)
         walls = request.allow_obstacles
         self._place(dmap, state, analysis, times, profile, tech, temperature, rng, walls)
         return dmap

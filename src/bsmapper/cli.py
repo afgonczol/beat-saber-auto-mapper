@@ -73,6 +73,13 @@ def generate(
     lighting: str = typer.Option("v3", help="Lightshow style: v3, vanilla or chroma."),
     zip_output: bool = typer.Option(True, "--zip/--no-zip", help="Also write a zip."),
     style: float | None = typer.Option(None, min=0.0, max=1.0, help="0 = flowy, 1 = technical."),
+    intensity: float | None = typer.Option(
+        None,
+        min=0.0,
+        max=1.0,
+        help="Challenge within each difficulty: 0.5 = typical human map, 1 = about the hardest "
+        "10%. Default: [generate] intensity in ~/.bsmapper/config.toml, else 0.5.",
+    ),
     install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
     seed: int = 0,
     temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
@@ -118,6 +125,7 @@ def generate(
         make_pipeline,
     )
     from bsmapper.generation.install import config_path
+    from bsmapper.generation.intensity import clamp_intensity, configured_intensity
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
 
@@ -139,6 +147,8 @@ def generate(
     jump = {d: JumpOverride(njs_per.get(d), rt_per.get(d)) for d in {*njs_per, *rt_per}}
     try:
         jump_defaults = configured_jumps()
+        if intensity is None:
+            intensity = configured_intensity()
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
@@ -146,6 +156,7 @@ def generate(
         difficulties=_parse_enum_list(difficulties, Difficulty, _DIFF_ALIASES, "--difficulties"),
         lighting=lighting,  # type: ignore[arg-type]
         style=style,
+        intensity=intensity,
         seed=seed,
         temperature=temperature,
         njs=njs_all,
@@ -165,6 +176,7 @@ def generate(
     setup = pipeline.setup
     source = f"model {setup.checkpoint}" if setup.generator == "model" else "stub generator"
     typer.echo(f"Notes: {source}" + (f" ({setup.reason})" if setup.reason else ""))
+    typer.echo(f"Intensity: {clamp_intensity(intensity):.2f}")
     game = load_config()
     if lighting == "chroma" and not game.chroma_installed():
         typer.secho(

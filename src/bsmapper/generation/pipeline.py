@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bsmapper.generation.density import object_flags
+from bsmapper.generation.intensity import checker_for
 from bsmapper.generation.njs import JumpOverride
 from bsmapper.generation.postprocess import PostReport, postprocess
 from bsmapper.generation.stub import StubGenerator
@@ -73,6 +74,9 @@ class GenerateOptions:
     difficulties: Sequence[Difficulty] = tuple(Difficulty)
     lighting: LightingStyle = "v3"
     style: float | None = None  # 0 flowy .. 1 technical
+    # 0..1 challenge within each difficulty (0.5 typical, 1 about the hardest 10%; see
+    # ``intensity``). None = 0.5; entry points fill in ``[generate] intensity`` from the config.
+    intensity: float | None = None
     seed: int = 0
     temperature: float = 1.0
     njs: float | None = None  # NJS for every difficulty (overrides the table)
@@ -266,7 +270,8 @@ class Pipeline:
 
     def _finish(self, raw: DifficultyMap, beatmap: Beatmap, opts) -> DifficultyResult:
         jump = opts.jump_for(raw.difficulty)
-        dmap, report = postprocess(raw, beatmap, self.checker, jump.njs, jump.reaction_s)
+        checker = checker_for(self.checker, opts.intensity)
+        dmap, report = postprocess(raw, beatmap, checker, jump.njs, jump.reaction_s)
         return DifficultyResult(dmap, report, notes_per_second(dmap, beatmap))
 
     def _first_pass(
@@ -463,6 +468,7 @@ def _request(characteristic, difficulty, opts, seed=None, temperature=None, targ
         difficulty=difficulty,
         target_nps=target_nps,
         style=opts.style,
+        intensity=opts.intensity,
         njs=opts.jump_for(difficulty).njs,
         seed=opts.seed if seed is None else seed,
         temperature=opts.temperature if temperature is None else temperature,

@@ -333,6 +333,11 @@ export interface components {
              */
             seed: number;
             /**
+             * Intensity
+             * @description 0.5 = typical human map, 1 = about the hardest 10%; omit for the configured default.
+             */
+            intensity?: number | null;
+            /**
              * Njs
              * @description NJS for every difficulty; omit for defaults.
              */
@@ -597,6 +602,11 @@ export interface components {
              * @default 0
              */
             seed: number;
+            /**
+             * Intensity
+             * @description Challenge within each difficulty: 0.5 = typical human map, 1 = about the hardest 10%; null = the server's configured default.
+             */
+            intensity?: number | null;
             /**
              * Njs
              * @description NJS for every difficulty; null = defaults.

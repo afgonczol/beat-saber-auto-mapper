@@ -783,6 +783,20 @@
             "title": "Seed",
             "default": 0
           },
+          "intensity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intensity",
+            "description": "0.5 = typical human map, 1 = about the hardest 10%; omit for the configured default."
+          },
           "njs": {
             "anyOf": [
               {
@@ -1338,6 +1352,20 @@
             "type": "integer",
             "title": "Seed",
             "default": 0
+          },
+          "intensity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intensity",
+            "description": "Challenge within each difficulty: 0.5 = typical human map, 1 = about the hardest 10%; null = the server's configured default."
           },
           "njs": {
             "anyOf": [

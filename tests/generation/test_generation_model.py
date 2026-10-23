@@ -24,7 +24,7 @@ from bsmapper.generation import (  # noqa: E402
     tempo_beatmap,
 )
 from bsmapper.generation import runtime as runtime_mod  # noqa: E402
-from bsmapper.generation.density import NPS_GAIN, Loudness, target_nps  # noqa: E402
+from bsmapper.generation.density import NPS_GAIN, Loudness  # noqa: E402
 from bsmapper.generation.lighting import (  # noqa: E402
     ModelLightingGenerator,
     SparseLightshowError,
@@ -110,11 +110,8 @@ def test_generate_many_decodes_and_post_processes(tiny_model, analysis) -> None:
     assert ModelGenerator(tiny_model, FAST).generate(analysis, requests[1]).difficulty == "Hard"
 
 
-def test_wanted_nps_defaults_to_the_heuristic() -> None:
-    filled = ModelGenerator._with_nps(req(Difficulty.EXPERT_PLUS), 120.0)
-    expected = target_nps(Difficulty.EXPERT_PLUS, Characteristic.STANDARD, 120.0)
-    assert filled.target_nps == expected
-    assert ModelGenerator._with_nps(req(target_nps=2.0), 120.0).target_nps == 2.0
+def test_conditioning_gains_are_sane() -> None:
+    # The wanted NPS (and its intensity percentile) is tested in test_generation_intensity.
     assert all(1.0 <= g <= 1.5 for g in NPS_GAIN.values())
 
 
@@ -237,3 +234,13 @@ def test_resolve_and_make_pipeline(checkpoint, monkeypatch, tmp_path) -> None:
     assert isinstance(a.generator, ModelGenerator) and a.light_model is not None
     assert a.generator.model is b.generator.model  # loaded once per process
     assert a.mapper == "bsmapper"
+
+
+def test_high_intensity_conditions_on_the_next_difficulty(tiny_model, analysis) -> None:
+    gen = ModelGenerator(tiny_model, FAST)
+    (dmap,) = gen.generate_many(analysis, [req(Difficulty.EXPERT, intensity=0.9, seed=2)])
+    assert dmap.difficulty == Difficulty.EXPERT  # the label stays
+    (p,) = gen.last_plans
+    assert p.condition_as == Difficulty.EXPERT_PLUS and p.wanted_nps > 0
+    fixed, report = postprocess(dmap, tempo_beatmap(analysis))
+    assert report.errors == []

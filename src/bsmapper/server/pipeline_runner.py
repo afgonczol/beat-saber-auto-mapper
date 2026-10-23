@@ -23,6 +23,7 @@ from bsmapper.generation import (
     replace_difficulty,
     safe_folder_name,
 )
+from bsmapper.generation.intensity import configured_intensity
 from bsmapper.generation.pipeline import (
     MAX_NPS_RATIO,
     RETRY_NPS_RATIO,
@@ -51,6 +52,7 @@ def _options(options: JobOptions) -> GenerateOptions:
         lighting=options.lighting,
         style=options.style,
         seed=options.seed,
+        intensity=options.intensity if options.intensity is not None else configured_intensity(),
         njs=options.njs,
         jump=jump,
         jump_defaults=configured_jumps(),

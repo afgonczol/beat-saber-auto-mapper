@@ -36,6 +36,13 @@ class JobOptions(BaseModel):
         default=None, ge=0.0, le=1.0, description="0 = flowy, 1 = technical, null = no preference."
     )
     seed: int = 0
+    intensity: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Challenge within each difficulty: 0.5 = typical human map, 1 = about the "
+        "hardest 10%; null = the server's configured default.",
+    )
     njs: float | None = Field(
         default=None, ge=1.0, le=40.0, description="NJS for every difficulty; null = defaults."
     )
