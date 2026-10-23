@@ -81,6 +81,26 @@ class OptimConfig:
     grad_accum: int = 1
     light_batch_size: int = 16
     light_loss_weight: float = 0.5
+    # z-loss: weight * mean(logsumexp(logits)^2) on both decoders' targets. It keeps the
+    # output logits from drifting (PaLM); 0 = off (note_v0).
+    z_loss: float = 0.0
+
+
+@dataclass(slots=True)
+class GuardConfig:
+    """Divergence guard (``training.guard``): roll back to the last good checkpoint when
+    the pre-clip gradient norm or the train loss blows up."""
+
+    enabled: bool = True
+    grad_ratio: float = 10.0  # a step is a spike when grad_norm > ratio x running median
+    grad_steps: int = 100  # this many spike steps within ``grad_window`` -> roll back
+    grad_window: int = 150
+    loss_jump: float = 1.0  # fast loss EMA above the slow EMA by this much -> roll back
+    nonfinite_steps: int = 20  # non-finite loss or gradient steps in a row -> roll back
+    min_history: int = 300  # steps of history before the guard may fire
+    history: int = 1000  # steps in the running grad-norm median
+    max_rollbacks: int = 3  # then give up (the run stops with an error)
+    lr_factor: float = 0.5  # learning rate multiplier per rollback
 
 
 @dataclass(slots=True)
@@ -100,6 +120,10 @@ class RunConfig:
     save_every: int = 2000
     keep_checkpoints: int = 3
     compile: bool = False
+    # Denser snapshots early, when a run is most likely to blow up.
+    early_save_every: int = 1000
+    early_save_until: int = 10000
+    guard: GuardConfig = field(default_factory=lambda: GuardConfig())
 
 
 @dataclass(slots=True)
@@ -153,4 +177,6 @@ def _build(cls, d: dict[str, Any]):
     unknown = set(d) - set(known)
     if unknown:
         raise ValueError(f"unknown {cls.__name__} keys: {sorted(unknown)}")
+    if cls is RunConfig and isinstance(d.get("guard"), dict):
+        d = {**d, "guard": _build(GuardConfig, d["guard"])}
     return cls(**{k: tuple(v) if k == "betas" else v for k, v in d.items()})

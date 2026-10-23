@@ -46,7 +46,7 @@ class AudioEncoder(nn.Module):
         self.pos = nn.Parameter(torch.zeros(1, cfg.audio_frames, cfg.d_model))
         self.drop = nn.Dropout(cfg.dropout)
         self.blocks = nn.ModuleList(
-            EncoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout)
+            EncoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout, cfg.qk_norm)
             for _ in range(cfg.encoder_layers)
         )
         self.ln = nn.LayerNorm(cfg.d_model)
@@ -70,7 +70,7 @@ class NoteMemory(nn.Module):
         self.embed = nn.Embedding(cfg.note_vocab, cfg.d_model)
         self.pos = nn.Embedding(cfg.note_memory_len, cfg.d_model)
         self.blocks = nn.ModuleList(
-            EncoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout)
+            EncoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout, cfg.qk_norm)
             for _ in range(cfg.note_memory_layers)
         )
         self.ln = nn.LayerNorm(cfg.d_model)
@@ -95,7 +95,8 @@ class TokenDecoder(nn.Module):
         self.pos = nn.Embedding(max_len, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
         self.blocks = nn.ModuleList(
-            DecoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout) for _ in range(layers)
+            DecoderBlock(cfg.d_model, cfg.n_heads, cfg.d_ff, cfg.dropout, cfg.qk_norm)
+            for _ in range(layers)
         )
         self.ln = nn.LayerNorm(cfg.d_model)
         self.head = nn.Linear(cfg.d_model, vocab, bias=False)

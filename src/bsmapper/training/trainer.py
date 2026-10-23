@@ -7,7 +7,11 @@ encoder is shared by both decoders.
 
     out_dir/last.pt            latest state (resumed automatically)
     out_dir/best.pt            lowest validation note loss
-    out_dir/step_NNNNNNN.pt    periodic snapshots (the newest ``keep_checkpoints``)
+    out_dir/good.pt            newest snapshot taken while the divergence guard saw a
+                               healthy run: the rollback target
+    out_dir/step_NNNNNNN.pt    periodic snapshots (the newest ``keep_checkpoints``),
+                               every ``early_save_every`` steps up to ``early_save_until``
+    out_dir/guard.log          divergence guard events (rollbacks, giving up)
     out_dir/config.yaml        the resolved config
     out_dir/tb/                TensorBoard events
 """
@@ -31,6 +35,7 @@ from bsmapper.models.mapper import MapperModel
 from bsmapper.tokenizer import version_for_vocab
 from bsmapper.training.config import TrainConfig
 from bsmapper.training.data import IGNORE, LightWindows, NoteWindows, collate, infinite_loader
+from bsmapper.training.guard import DivergenceGuard
 from bsmapper.training.store import DatasetStore
 
 log = logging.getLogger(__name__)
@@ -58,6 +63,17 @@ def token_loss(logits: torch.Tensor, targets: torch.Tensor, smoothing: float):
     mask = targets != IGNORE
     correct = ((logits.argmax(-1) == targets) & mask).sum()
     return loss, correct, mask.sum()
+
+
+def z_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """mean(logsumexp(logits)^2) over the non-ignored targets (PaLM's z-loss)."""
+    mask = targets != IGNORE
+    z = torch.logsumexp(logits.float(), dim=-1)
+    return (z[mask] ** 2).mean() if mask.any() else z.sum() * 0.0
+
+
+class TrainingDiverged(RuntimeError):
+    """The divergence guard rolled back ``max_rollbacks`` times and gave up."""
 
 
 def _param_groups(model: torch.nn.Module, weight_decay: float) -> list[dict[str, Any]]:
@@ -149,10 +165,13 @@ class Trainer:
             fused=self.device.type == "cuda",
         )
         o = cfg.optim
+        self.lr_scale = 1.0  # halved by each rollback of the divergence guard
+        self.rollbacks = 0
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer,
-            lambda s: lr_lambda(s, o.warmup_steps, o.max_steps, o.min_lr_ratio),
+            lambda s: self.lr_scale * lr_lambda(s, o.warmup_steps, o.max_steps, o.min_lr_ratio),
         )
+        self.guard = DivergenceGuard(run.guard)
         self.step = 0
         self.best_val = float("inf")
         if resume and (self.out_dir / "last.pt").exists():
@@ -173,27 +192,24 @@ class Trainer:
     def _to(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
 
-    def note_loss(self, batch: dict[str, torch.Tensor]):
+    def note_loss(self, batch: dict[str, torch.Tensor], with_z: bool = False):
         m = self.forward_model
         with self._autocast():
             memory = m.encode_audio(batch["features"])
             logits = m.note_logits(memory, batch["inputs"])
-        return token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
+        out = token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
+        return (*out, z_loss(logits, batch["targets"])) if with_z else out
 
-    def light_loss(self, batch: dict[str, torch.Tensor]):
+    def light_loss(self, batch: dict[str, torch.Tensor], with_z: bool = False):
         m = self.forward_model
         with self._autocast():
             memory = m.encode_audio(batch["features"])
             logits = m.light_logits(memory, batch["note_tokens"], batch["inputs"])
-        return token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
+        out = token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
+        return (*out, z_loss(logits, batch["targets"])) if with_z else out
 
-    # --- loop ---------------------------------------------------------------------
-
-    def train(self, max_steps: int | None = None) -> dict[str, float]:
-        cfg, o, run = self.cfg, self.cfg.optim, self.cfg.run
-        total = max_steps if max_steps is not None else o.max_steps
-        seed = run.seed + self.step  # a resumed run draws new batches
-        workers = cfg.data.num_workers
+    def _loaders(self, seed: int):
+        o, workers = self.cfg.optim, self.cfg.data.num_workers
         note_iter = (
             infinite_loader(self.notes, o.batch_size, workers, seed) if self.train_notes else None
         )
@@ -202,6 +218,47 @@ class Trainer:
             if self.lights is not None
             else None
         )  # fmt: skip
+        return note_iter, light_iter
+
+    def _save_every(self) -> int:
+        run = self.cfg.run
+        early = min(run.early_save_every, run.save_every)
+        return early if self.step <= run.early_save_until else run.save_every
+
+    def _guard_event(self, msg: str, writer) -> None:
+        log.error("DIVERGENCE GUARD: %s", msg)
+        writer.add_text("guard", msg, self.step)
+        with open(self.out_dir / "guard.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} step {self.step}: {msg}\n")
+
+    def rollback(self, reason: str, writer) -> None:
+        """Back to ``good.pt`` with the learning rate cut, or raise ``TrainingDiverged``."""
+        g = self.cfg.run.guard
+        at = f"{reason} at step {self.step} ({self.guard.describe()})"
+        good = self.out_dir / "good.pt"
+        if self.rollbacks >= g.max_rollbacks or not good.exists():
+            why = "no good checkpoint yet" if not good.exists() else f"{self.rollbacks} rollbacks"
+            self._guard_event(f"GAVE UP: {at}; {why}", writer)
+            raise TrainingDiverged(f"training diverged ({at}); {why}")
+        rollbacks, scale = self.rollbacks + 1, self.lr_scale * g.lr_factor
+        self.load(good)
+        self.rollbacks, self.lr_scale = rollbacks, scale
+        for group, base in zip(self.optimizer.param_groups, self.scheduler.base_lrs, strict=True):
+            group["lr"] = base * self.scheduler.lr_lambdas[0](self.scheduler.last_epoch)
+        self.guard.after_rollback()
+        self._guard_event(
+            f"ROLLBACK {rollbacks}/{g.max_rollbacks}: {at}; back to step {self.step}, "
+            f"lr x{scale:g}, new data order",
+            writer,
+        )
+
+    # --- loop ---------------------------------------------------------------------
+
+    def train(self, max_steps: int | None = None) -> dict[str, float]:
+        o, run = self.cfg.optim, self.cfg.run
+        total = max_steps if max_steps is not None else o.max_steps
+        # A resumed run draws new batches, and so does each rollback.
+        note_iter, light_iter = self._loaders(run.seed + self.step + 7919 * self.rollbacks)
         writer = _writer(self.out_dir / "tb")
         if self.step == 0:
             writer.add_text("config", f"```\n{self._config_yaml()}\n```")
@@ -212,30 +269,44 @@ class Trainer:
         t0 = time.perf_counter()
         while self.step < total:
             self.optimizer.zero_grad(set_to_none=True)
+            step_loss = 0.0
             for _ in range(o.grad_accum):
                 loss = torch.zeros((), device=self.device)
                 if note_iter is not None:
                     nb = self._to(next(note_iter))
-                    nl, nc, nn_ = self.note_loss(nb)
-                    loss = loss + nl
+                    nl, nc, nn_, nz = self.note_loss(nb, with_z=True)
+                    loss = loss + nl + o.z_loss * nz
                     meter.add("note", nl.item(), nc.item(), nn_.item())
+                    meter.add_value("note_z", nz.item())
+                    step_loss += nl.item() / o.grad_accum
                 if light_iter is not None:
                     lb = self._to(next(light_iter))
-                    ll, lc, ln = self.light_loss(lb)
-                    loss = loss + o.light_loss_weight * ll
+                    ll, lc, ln, lz = self.light_loss(lb, with_z=True)
+                    loss = loss + o.light_loss_weight * (ll + o.z_loss * lz)
                     meter.add("light", ll.item(), lc.item(), ln.item())
+                    if note_iter is None:
+                        step_loss += ll.item() / o.grad_accum
                 (loss / o.grad_accum).backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), o.grad_clip)
-            self.optimizer.step()
+            grad_norm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), o.grad_clip))
+            if math.isfinite(grad_norm):
+                self.optimizer.step()
             self.scheduler.step()
             self.step += 1
-            meter.grad_norm += float(grad_norm)
+            meter.grad_norm += grad_norm if math.isfinite(grad_norm) else 0.0
+            meter.grad_norm_max = max(meter.grad_norm_max, grad_norm)
             meter.steps += 1
+            reason = self.guard.update(step_loss, grad_norm) if run.guard.enabled else None
+            if reason is not None:
+                self.rollback(reason, writer)
+                note_iter, light_iter = self._loaders(run.seed + self.step + 7919 * self.rollbacks)
+                meter, t0 = _Meter(), time.perf_counter()
+                continue
 
             if self.step % run.log_every == 0 or self.step == total:
                 elapsed = time.perf_counter() - t0
                 last = meter.summary(elapsed)
                 last["lr"] = self.scheduler.get_last_lr()[0]
+                last["grad_norm_median"] = self.guard.median
                 if self.device.type == "cuda":
                     last["gpu_mem_gb"] = torch.cuda.max_memory_allocated(self.device) / 1024**3
                 for k, v in last.items():
@@ -254,11 +325,14 @@ class Trainer:
                     self.best_val = val["note_loss"]
                     self.save(self.out_dir / "best.pt")
                 self.model.train()
-            if self.step % run.save_every == 0 or self.step == total:
+            every = self._save_every()
+            if self.step % every == 0 or self.step == total:
                 self.save(self.out_dir / "last.pt")
-                if self.step % run.save_every == 0:
+                if self.step % every == 0:
                     self.save(self.out_dir / f"step_{self.step:07d}.pt")
                     self._prune()
+                if self.guard.healthy:
+                    self.save(self.out_dir / "good.pt")
         writer.flush()
         writer.close()
         return last
@@ -302,6 +376,8 @@ class Trainer:
         state.update(
             step=self.step,
             best_val=self.best_val,
+            rollbacks=self.rollbacks,
+            lr_scale=self.lr_scale,
             train_config=self.cfg.to_dict(),
             optimizer=self.optimizer.state_dict(),
             scheduler=self.scheduler.state_dict(),
@@ -327,6 +403,8 @@ class Trainer:
         self.scheduler.load_state_dict(ckpt["scheduler"])
         self.step = ckpt["step"]
         self.best_val = ckpt.get("best_val", float("inf"))
+        self.rollbacks = ckpt.get("rollbacks", 0)
+        self.lr_scale = ckpt.get("lr_scale", 1.0)
         rng = ckpt.get("rng") or {}
         if "python" in rng:
             random.setstate(rng["python"])
@@ -353,8 +431,13 @@ class Trainer:
 class _Meter:
     def __init__(self) -> None:
         self.sums: dict[str, list[float]] = {}
+        self.values: dict[str, list[float]] = {}
         self.grad_norm = 0.0
+        self.grad_norm_max = 0.0
         self.steps = 0
+
+    def add_value(self, name: str, value: float) -> None:
+        self.values.setdefault(name, []).append(value)
 
     def add(self, name: str, loss: float, correct: float, count: float) -> None:
         s = self.sums.setdefault(name, [0.0, 0.0, 0.0, 0])
@@ -370,7 +453,10 @@ class _Meter:
             out[f"{name}_loss"] = loss / max(n, 1)
             out[f"{name}_acc"] = correct / max(count, 1)
             tokens += count
+        for name, vals in self.values.items():
+            out[name] = sum(vals) / len(vals)
         out["grad_norm"] = self.grad_norm / max(self.steps, 1)
+        out["grad_norm_max"] = self.grad_norm_max
         out["target_tokens_per_s"] = tokens / max(elapsed, 1e-9)
         out["steps_per_s"] = self.steps / max(elapsed, 1e-9)
         return out

@@ -2,6 +2,12 @@
 
 Masks follow ``F.scaled_dot_product_attention``: boolean, ``True`` = may attend,
 broadcast to ``(batch, heads, queries, keys)``.
+
+``qk_norm`` (note_v1) applies a LayerNorm per head to queries and keys before the
+dot product. That bounds the attention logits, which grew without limit in the first
+note_v1 run and made it diverge right after warmup. Under bf16 autocast the norms run in
+fp32, and SDPA's flash and memory-efficient kernels keep the softmax statistics in fp32.
+Blocks without it (note_v0) have exactly the old parameters.
 """
 
 from __future__ import annotations
@@ -41,7 +47,7 @@ class DecoderCache:
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, dropout: float) -> None:
+    def __init__(self, d_model: int, n_heads: int, dropout: float, qk_norm: bool = False) -> None:
         super().__init__()
         if d_model % n_heads:
             raise ValueError("d_model must be divisible by n_heads")
@@ -50,6 +56,8 @@ class MultiHeadAttention(nn.Module):
         self.kv = nn.Linear(d_model, 2 * d_model)
         self.out = nn.Linear(d_model, d_model)
         self.dropout = dropout
+        self.q_norm = nn.LayerNorm(d_model // n_heads) if qk_norm else None
+        self.k_norm = nn.LayerNorm(d_model // n_heads) if qk_norm else None
 
     def _split(self, x: Tensor) -> Tensor:
         b, n, d = x.shape
@@ -57,12 +65,17 @@ class MultiHeadAttention(nn.Module):
 
     def project_kv(self, x: Tensor) -> tuple[Tensor, Tensor]:
         k, v = self.kv(x).chunk(2, dim=-1)
-        return self._split(k), self._split(v)
+        k, v = self._split(k), self._split(v)
+        if self.k_norm is not None:
+            k = self.k_norm(k).to(v.dtype)
+        return k, v
 
     def attend(
         self, x: Tensor, k: Tensor, v: Tensor, mask: Tensor | None, causal: bool = False
     ) -> Tensor:
         q = self._split(self.q(x))
+        if self.q_norm is not None:
+            q = self.q_norm(q).to(v.dtype)
         y = F.scaled_dot_product_attention(
             q,
             k,
@@ -93,10 +106,12 @@ class FeedForward(nn.Sequential):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float) -> None:
+    def __init__(
+        self, d_model: int, n_heads: int, d_ff: int, dropout: float, qk_norm: bool = False
+    ) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(d_model)
-        self.attn = MultiHeadAttention(d_model, n_heads, dropout)
+        self.attn = MultiHeadAttention(d_model, n_heads, dropout, qk_norm)
         self.ln2 = nn.LayerNorm(d_model)
         self.ff = FeedForward(d_model, d_ff, dropout)
         self.drop = nn.Dropout(dropout)
@@ -107,12 +122,14 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float) -> None:
+    def __init__(
+        self, d_model: int, n_heads: int, d_ff: int, dropout: float, qk_norm: bool = False
+    ) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(d_model)
-        self.self_attn = MultiHeadAttention(d_model, n_heads, dropout)
+        self.self_attn = MultiHeadAttention(d_model, n_heads, dropout, qk_norm)
         self.ln2 = nn.LayerNorm(d_model)
-        self.cross_attn = MultiHeadAttention(d_model, n_heads, dropout)
+        self.cross_attn = MultiHeadAttention(d_model, n_heads, dropout, qk_norm)
         self.ln3 = nn.LayerNorm(d_model)
         self.ff = FeedForward(d_model, d_ff, dropout)
         self.drop = nn.Dropout(dropout)

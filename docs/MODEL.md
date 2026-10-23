@@ -219,7 +219,8 @@ windows = NoteSampler(model).generate(features, conds, opts, ref_fn=ref_fn)
 ### Run (dataset v1)
 
 - **Config**: `configs/note_v1.yaml`. 97M parameters, batch 32 note windows + 16 light
-  windows, lr 3e-4 with 2k warmup, 80k steps (about 3 passes over the v1 note windows).
+  windows, peak lr 2e-4 with 4k warmup, 80k steps (about 4.4 passes over the v1 note
+  windows).
 - **Benchmark** on real v1 batches (200 steps, while the dataset build was still using
   the CPU and the GPU):
 
@@ -231,3 +232,64 @@ windows = NoteSampler(model).generate(features, conds, opts, ref_fn=ref_fn)
 
   d=640 would only reach about 50k steps overnight and leaves no VRAM for inference by
   other sessions, so v1 uses d=512.
+
+### Run 1 diverged; stability fixes
+
+The first note_v1 run (lr 3e-4, 2k warmup, betas 0.9/0.98, no QK-norm) **diverged**:
+
+- It trained normally through step ~2.6k: train note loss 1.92, val 1.93 at 2k.
+- Right after warmup reached the peak lr, the pre-clip gradient norm went 1.05 → 9
+  (2.8k) → 72 (2.9k) → 2,640 (3.4k) → 6.8e6 (3.5k) → ~1e10.
+- The loss jumped to chance (~6, accuracy 0.02) and never recovered.
+- Gradient clipping at 1.0 was on, and the weights stayed small (max |w| ≈ 0.5, no NaNs),
+  so the optimizer itself was walking off a cliff. This is the classic attention-logit
+  growth instability of deeper post-warmup transformers, here with a 10-layer decoder and
+  longer prompts (REF context). The run is kept in `checkpoints/note_v1/diverged_run1/`.
+
+Fixes, all in this PR:
+
+| fix | where |
+|---|---|
+| **QK-LayerNorm**: a LayerNorm per head on queries and keys in every attention block, which bounds the attention logits. Off by default (`ModelConfig.qk_norm`), so note_v0 checkpoints rebuild their old layout; the v0 golden test still passes | `models/layers.py` |
+| **z-loss** 1e-4 · mean(logsumexp(logits)²) on both decoders | `training/trainer.py`, `optim.z_loss` |
+| AdamW **betas (0.9, 0.95)**, **peak lr 2e-4**, **warmup 4k** | `configs/note_v1.yaml` |
+| fp32 softmax: under bf16 autocast the q/k norms run in fp32, and SDPA's flash and memory-efficient kernels keep the softmax statistics in fp32 | `models/layers.py` |
+| **Divergence guard** with automatic rollback (below) | `training/guard.py` |
+| Step snapshots every 1k steps up to 10k (`run.early_save_every`), then every 2k | `training/trainer.py` |
+| A watchdog that reads the log (NaN, huge gradients, guard gave up) and honours a STOP file | `scripts/train_control.py` |
+
+**Divergence guard.** Every step, `DivergenceGuard` sees the train loss and the pre-clip
+gradient norm. It triggers when either of these happens:
+
+- 100 of the last 150 steps have a norm above 10× the running median of the last 1000
+  normal steps;
+- a ~20-step loss EMA rises 1.0 above a ~500-step one;
+- 20 steps in a row are non-finite.
+
+Spike steps never enter the baselines.
+
+When it triggers, the trainer:
+
+1. reloads `good.pt`, the newest snapshot taken while the guard saw a healthy run;
+2. halves the learning rate (the scale is saved in checkpoints);
+3. draws a new data order;
+4. writes the event to `guard.log`, the log and TensorBoard.
+
+After 3 rollbacks it gives up with `TrainingDiverged`. `tests/training/test_training_guard.py`
+covers the detector on synthetic sequences and a real trainer with an injected spike.
+
+### Pausing and resuming a run
+
+The run is controlled with `checkpoints/note_v1/code/control.py`, a copy of
+`scripts/train_control.py`:
+
+```bash
+python checkpoints/note_v1/code/control.py status   # running? last step, guard events
+python checkpoints/note_v1/code/control.py stop     # pause, e.g. to play; keeps last.pt
+python checkpoints/note_v1/code/control.py start    # resume from last.pt, with the watchdog
+```
+
+`train.pid` holds the trainer's cmd.exe (`taskkill /PID <pid> /T /F` stops the whole
+tree), and `watchdog.pid` the watchdog. `stop` writes a `STOP` file so the watchdog does
+not restart the run. A pause loses at most the steps since the last snapshot (1k steps
+early on, 2k later; about 8–16 min).

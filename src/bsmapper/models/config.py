@@ -33,6 +33,9 @@ class ModelConfig:
     note_memory_len: int = 1024
     tie_embeddings: bool = True
     grad_checkpointing: bool = False
+    # LayerNorm on queries and keys per head (note_v1). Off by default: checkpoints saved
+    # without the key (note_v0) rebuild their exact old layout.
+    qk_norm: bool = False
 
     @property
     def d_ff(self) -> int:

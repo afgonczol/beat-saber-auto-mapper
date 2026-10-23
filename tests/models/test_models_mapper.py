@@ -54,9 +54,10 @@ def test_wrong_frame_count_is_an_error():
         m.encode_audio(torch.randn(1, 100, 83))
 
 
-def test_kv_cache_matches_teacher_forcing_with_left_padding():
+@pytest.mark.parametrize("qk_norm", [False, True])
+def test_kv_cache_matches_teacher_forcing_with_left_padding(qk_norm):
     torch.manual_seed(0)
-    m = MapperModel(tiny()).eval()
+    m = MapperModel(tiny(qk_norm=qk_norm)).eval()
     mem = m.encode_audio(torch.randn(2, 384, 83))
     seqs = [torch.randint(4, 600, (9,)), torch.randint(4, 600, (6,))]
     full = [m.note_logits(mem[b : b + 1], s[None])[0] for b, s in enumerate(seqs)]
@@ -101,3 +102,30 @@ def test_feature_stats_normalize_the_input():
     a = m.encode_audio(x * 20 - 40)
     m.set_feature_stats(torch.zeros(83), torch.ones(83))
     assert torch.allclose(a, m.encode_audio(x), atol=1e-4)
+
+
+def test_qk_norm_is_opt_in_and_bounds_attention_logits():
+    plain, normed = MapperModel(tiny()), MapperModel(tiny(qk_norm=True))
+    extra = set(normed.state_dict()) - set(plain.state_dict())
+    assert extra and all(k.endswith(("q_norm.weight", "q_norm.bias", "k_norm.weight",
+                                     "k_norm.bias")) for k in extra)  # fmt: skip
+    assert set(plain.state_dict()) <= set(normed.state_dict())
+    # A note_v0 config has no qk_norm key and rebuilds without the norms.
+    cfg = tiny().to_dict()
+    del cfg["qk_norm"]
+    assert not ModelConfig.from_dict(cfg).qk_norm
+    # Huge query/key weights cannot blow up the attention: q and k are normalized.
+    attn = normed.notes.blocks[0].self_attn
+    with torch.no_grad():
+        attn.q.weight.mul_(1e4)
+        attn.kv.weight.mul_(1e4)
+    mem = normed.encode_audio(torch.randn(1, 384, 83))
+    assert torch.isfinite(normed.note_logits(mem, torch.randint(4, 600, (1, 20)))).all()
+
+
+def test_z_loss_matches_logsumexp():
+    from bsmapper.training.trainer import IGNORE, z_loss
+
+    logits = torch.zeros(2, 3, 10)
+    targets = torch.tensor([[1, 2, IGNORE], [IGNORE, IGNORE, 3]])
+    assert z_loss(logits, targets).item() == pytest.approx(torch.log(torch.tensor(10.0)) ** 2)
