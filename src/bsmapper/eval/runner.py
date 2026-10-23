@@ -220,7 +220,13 @@ def build_systems(cfg: EvalConfig) -> list:
         names = saved_systems(cfg.rescore)
         if not names:
             raise ValueError(f"{cfg.rescore} has no saved maps ({MAPS_DIR}/)")
-        return systems + [SavedSystem(cfg.rescore, n) for n in names]
+        meta: dict[str, dict] = {}
+        old = cfg.rescore / SUMMARY
+        if old.is_file():
+            described = json.loads(old.read_text(encoding="utf-8"))["meta"]["systems"]
+            meta = {d["name"].replace("/", "_"): d for d in described}
+        order = [n for n in meta if n in names] + [n for n in names if n not in meta]
+        return systems + [SavedSystem(cfg.rescore, n, meta.get(n)) for n in order]
     if cfg.stub:
         systems.append(stub_system(cfg.seed))
     if cfg.checkpoints:
@@ -318,7 +324,7 @@ def run_eval(
                     _song_record(
                         system.name,
                         song,
-                        seconds=time.perf_counter() - t,
+                        seconds=out.seconds or time.perf_counter() - t,
                         pairs=len(pairs),
                         notes=out.notes,
                     )

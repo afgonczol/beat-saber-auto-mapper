@@ -130,11 +130,72 @@ maps, per metric). It picks each file's first model system (else the stub);
 
 ## Results: note_v0 vs the stub (2026-10-22)
 
-See the PR for this package (afgonczol/beat-saber-auto-mapper#11) for the run and its
-headline numbers. Run conditions: the v1 dataset build had the CPU at 100% and the rule
-masks are CPU-bound, so note_v0 took about 6–10 minutes per song. The run therefore used
-a **fixed subset**: the first 30 test songs by key that have a Standard Hard, Expert or
-Expert+ map, those three difficulties only, and a 6-song style sweep.
+```bash
+bsmapper evaluate -m checkpoints/note_v0/best.pt --limit 30 --modes Standard \
+  --difficulties Hard,Expert,Expert+ --style-songs 6 --name note_v0-subset30
+```
+
+**Subset.** The v1 dataset build had the CPU at 100% and the rule masks are CPU-bound, so
+note_v0 took about 4–5 minutes per song (2.5 h in all). The run therefore used a **fixed
+subset**: the first 30 test songs by key that have a Standard Hard, Expert or Expert+ map,
+those three difficulties only (58 difficulties: 13 Hard, 19 Expert, 26 Expert+), and the
+style sweep on the first 6 of them. Seed 0, no style, default NPS heuristic, intensity
+not available yet. Score note_v1 with the same command to compare.
+
+| all 58 difficulties | human | stub | note_v0 |
+|---|---|---|---|
+| onset F1 ±1 / ±2 ticks | – | **0.637 / 0.639** | 0.579 / 0.583 |
+| note onsets on audio peaks | 0.774 | 0.708 | 0.608 |
+| NPS / human NPS | 1.00 | 0.87 | 1.19 |
+| NPS percentile (median) | 48 | 26 | 80 |
+| difficulty step offset (median) | −0.03 | −0.54 | **+0.77** |
+| rule errors / warnings per 100 notes | 0.26 / 1.75 | 0 / 0 | 0 / 0.90 |
+| JSD direction / position | 0.000 / 0.002 | 0.048 / 0.091 | **0.020 / 0.007** |
+| JSD pattern 2-gram / 3-gram | 0.085 / 0.241 | 0.659 / 0.802 | **0.106 / 0.202** |
+| JSD rhythm | 0.020 | 0.067 | 0.032 |
+| red share / crossover rate | 0.491 / 0.050 | 0.501 / 0.005 | 0.491 / 0.033 |
+| repeats: exact / mirrored / same rhythm / different | 29% / 14% / 47% / 11% | 0 / 0 / 87% / 13% | 0.1% / 0.1% / 41% / 59% |
+| repetition distance to human | 0 | 0.42 | 0.48 |
+
+The human JSD column is the split-half floor; note_v0's pattern 3-gram JSD is below it
+because the floor compares two halves of 30 songs, each sparser than the pooled set.
+
+| Step offset (mean) | human | stub | note_v0 |
+|---|---|---|---|
+| Hard | +0.09 | −0.61 | +0.60 |
+| Expert | +0.10 | −0.64 | +0.91 |
+| Expert+ | +0.17 | −0.51 | +0.78 |
+
+**Style** (Standard Expert, 6 songs): note_v0's tech score goes from −0.79 at style 0 to
++0.53 at style 1 (human percentile 6 → 84, Spearman ρ 0.94): the style token works. The
+stub stays at the 99th+ percentile whatever the style.
+
+**Lighting** (30 songs, vanilla events):
+
+| | human | stub (L0 rules) | note_v0 (L1 model) |
+|---|---|---|---|
+| light events / bar | 27.2 | 7.2 | 26.9 |
+| events on onsets / chance | 1.69 | 2.58 | 1.36 |
+| strong onsets lit | 0.80 | 0.89 | 0.83 |
+| section changes answered / lift over bar lines | 0.85 / 1.09 | 1.00 / 1.14 | 0.64 / 1.00 |
+| density ~ section energy (r) | 0.53 | 0.63 | 0.27 |
+
+What it says:
+
+- **Density:** on the human grid with #31's density feedback, note_v0 is *denser* than
+  the human maps of the same songs (NPS ×1.19, about 0.8 of a difficulty step above),
+  not sparser. The playtest's "one step too easy" therefore isn't explained by note
+  count on these songs. Candidates are the lower audio sync (61% of onsets on audio peaks
+  against 77% for humans), the flatter, less technical patterns (tech score −0.26 against
+  −0.01) and the missing reuse on repeated sections. The playtest map (Stronger, before
+  #31) was also sparser than these.
+- **Patterns:** note_v0 is far closer to human pattern statistics than the stub, but
+  places onsets less like the human mapper (F1 0.58 against the stub's 0.64, which snaps
+  to onset peaks).
+- **Repetition:** note_v0 almost never reuses a pattern on repeated music (0.2% exact
+  or mirrored against 42% for humans). This is the gap note_v1's structure memory targets.
+- **Lighting:** L1 matches human event density but follows onsets and sections less than
+  the human shows and the L0 rules.
 
 ## Limitations
 

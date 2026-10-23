@@ -145,8 +145,9 @@ class SavedSystem:
 
     kind = "saved"
 
-    def __init__(self, root: Path, name: str) -> None:
+    def __init__(self, root: Path, name: str, meta: dict[str, Any] | None = None) -> None:
         self.root, self.name = root, name
+        self.meta = meta or {}  # the system's description in the earlier run's summary
 
     def run(self, song: EvalSong, analysis, groups, style=None, lighting=True) -> SystemOutput:
         path = _file(self.root, self.name, song.key, style)
@@ -159,4 +160,4 @@ class SavedSystem:
         return out
 
     def describe(self) -> dict[str, Any]:
-        return {"name": self.name, "generator": "saved maps", "path": str(self.root / MAPS_DIR)}
+        return {**self.meta, "name": self.name, "replayed_from": str(self.root / MAPS_DIR)}
