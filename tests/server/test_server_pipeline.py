@@ -116,3 +116,15 @@ def test_job_intensity_falls_back_to_the_config(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setenv("BSMAPPER_CONFIG", str(cfg))
     assert _options(JobOptions()).intensity == 0.8
     assert _options(JobOptions(intensity=0.3)).intensity == 0.3
+
+
+def test_job_repetition_falls_back_to_the_config(monkeypatch, tmp_path: Path) -> None:
+    from bsmapper.server.models import JobOptions
+    from bsmapper.server.pipeline_runner import _options
+
+    assert _options(JobOptions()).repetition is None  # learned
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[generate]\nrepetition = 0.7\n", encoding="utf-8")
+    monkeypatch.setenv("BSMAPPER_CONFIG", str(cfg))
+    assert _options(JobOptions()).repetition == 0.7
+    assert _options(JobOptions(repetition=0.2)).repetition == 0.2

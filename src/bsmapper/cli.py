@@ -80,6 +80,13 @@ def generate(
         help="Challenge within each difficulty: 0.5 = typical human map, 1 = about the hardest "
         "10%. Default: [generate] intensity in ~/.bsmapper/config.toml, else 0.5.",
     ),
+    repetition: float | None = typer.Option(
+        None,
+        min=0.0,
+        max=1.0,
+        help="How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = "
+        "the learned amount, 1 = twice as strongly. Default: [generate] repetition, else learned.",
+    ),
     install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
     seed: int = 0,
     temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
@@ -125,7 +132,11 @@ def generate(
         make_pipeline,
     )
     from bsmapper.generation.install import config_path
-    from bsmapper.generation.intensity import clamp_intensity, configured_intensity
+    from bsmapper.generation.intensity import (
+        clamp_intensity,
+        configured_intensity,
+        configured_repetition,
+    )
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
 
@@ -149,6 +160,8 @@ def generate(
         jump_defaults = configured_jumps()
         if intensity is None:
             intensity = configured_intensity()
+        if repetition is None:
+            repetition = configured_repetition()
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
@@ -157,6 +170,7 @@ def generate(
         lighting=lighting,  # type: ignore[arg-type]
         style=style,
         intensity=intensity,
+        repetition=repetition,
         seed=seed,
         temperature=temperature,
         njs=njs_all,
@@ -176,7 +190,8 @@ def generate(
     setup = pipeline.setup
     source = f"model {setup.checkpoint}" if setup.generator == "model" else "stub generator"
     typer.echo(f"Notes: {source}" + (f" ({setup.reason})" if setup.reason else ""))
-    typer.echo(f"Intensity: {clamp_intensity(intensity):.2f}")
+    rep = "learned" if repetition is None else f"{repetition:.2f}"
+    typer.echo(f"Intensity: {clamp_intensity(intensity):.2f}, repetition: {rep}")
     game = load_config()
     if lighting == "chroma" and not game.chroma_installed():
         typer.secho(

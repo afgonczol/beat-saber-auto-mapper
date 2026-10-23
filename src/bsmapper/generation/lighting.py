@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING
 from bsmapper.generation.model import song_features
 from bsmapper.interfaces import AudioAnalysis, LightingStyle
 from bsmapper.schema import Beatmap, Characteristic, Difficulty, DifficultyMap, Lightshow
-from bsmapper.tokenizer import Conditioning, LightingTokenizer, MapTokenizer, notes_per_second
+from bsmapper.tokenizer import (
+    Conditioning,
+    LightingTokenizer,
+    MapTokenizer,
+    notes_per_second,
+    version_for_vocab,
+)
 
 if TYPE_CHECKING:
     from bsmapper.models import MapperModel
@@ -67,11 +73,16 @@ class ModelLightingGenerator:
         n_windows = feats.shape[0] // 384
         lead = lead_difficulty(beatmap)
         if lead is None:  # a lightshow-only map: follow an empty note track
-            empty = DifficultyMap(Characteristic.STANDARD, Difficulty.EXPERT_PLUS)
-            note_windows = MapTokenizer().encode(empty, n_windows=n_windows)
+            lead = DifficultyMap(Characteristic.STANDARD, Difficulty.EXPERT_PLUS)
+            cond = Conditioning.from_map(lead)
         else:
             cond = Conditioning.from_map(lead, nps=notes_per_second(lead, beatmap))
-            note_windows = MapTokenizer().encode(lead, cond, n_windows=n_windows)
+        note_windows = MapTokenizer().encode(lead, cond, n_windows=n_windows)
+        # The note track's prefix must be in the checkpoint's layout (note_v0 has no
+        # INTENSITY token; its vocabulary would not even have the id).
+        prefix = cond.prefix_ids(version=version_for_vocab(self.model.cfg.note_vocab))
+        for w in note_windows:
+            w.prefix = list(prefix)
         options = SamplingOptions(
             temperature=self.temperature,
             top_p=self.top_p,

@@ -32,7 +32,8 @@ the model whenever the notes come from it. The checkpoint is, in order:
 
 1. `--model PATH`
 2. `[model] checkpoint` in `~/.bsmapper/config.toml`
-3. `checkpoints/note_v0/best.pt` under the current folder or the repository
+3. `checkpoints/note_v1/best.pt`, then `checkpoints/note_v0/best.pt`, under the current folder
+   or the repository
 
 ```toml
 [model]
@@ -145,6 +146,73 @@ typical level.
 - A second boosted copy (1.6× and 2.4×) closed Stronger's Expert+ gap. But Toxic
   overshot by about 25%, and decoding took 60–70 s instead of about 40 s, so the default
   keeps one.
+
+## note_v1
+
+note_v1 is the default checkpoint; note_v0 still works with `--model
+checkpoints/note_v0/best.pt`. The tokenizer version comes from the checkpoint's
+vocabulary (`ModelGenerator.version`):
+
+- version 2 (note_v1) has the INTENSITY token and the structure memory;
+- version 1 (note_v0) has neither.
+
+What note_v1 adds:
+
+- **Intensity** goes into the INTENSITY token (`Conditioning.from_request`). The #32
+  DIFF up-shift above 0.75 stays on (`ModelSettings.intensity_shift`; see the table
+  below):
+  - at 0.8, the token alone put Expert at 0.82–1.33× the human median on three songs;
+  - the token plus the shift put it at 0.95–1.33×;
+  - neither had a rule error.
+- **Conditioning gain**: note_v1 follows its NPS token closely, so its gains are 1.0
+  (`density.gains_for`). note_v0 keeps 1.12–1.33. With v0's gains, v1 overshot by
+  14–44%.
+- **Structure memory**:
+  - `Pipeline.analyze` adds a `chroma` frame feature, computed from the audio the way
+    the dataset build does, when the generator needs it.
+  - `ModelGenerator` finds each window's most similar earlier span
+    (`data.structure.find_references`, threshold 0.85) and passes `WindowRefs` to the
+    sampler. The reference notes are the ones already generated: the copy the density
+    feedback kept.
+- **`--repetition 0..1`**: also `[generate] repetition` in the config, `repetition` in the
+  jobs API, and the web UI's Repetition slider. It scales the reference guidance:
+  0 = ignore the reference, 0.5 = the learned amount, 1 = twice as strong. Unset
+  (`None`, the default) is the learned behaviour, with no extra batch rows.
+- **Lighting**: from note_v1's lighting decoder (L1), through WS8's renderers with the
+  rest pose and capped sweeps, and the L0 fallback. The note track it follows now gets
+  the checkpoint's prefix layout. Before, a note_v0 checkpoint would have been handed
+  INTENSITY ids outside its vocabulary.
+
+### note_v1 vs note_v0 at intensity 0.8
+
+Hard / Expert / Expert+, seed 0, learned repetition. Each cell is NPS / longest gap over
+loud music (beats) / rule errors and warnings per 100 notes / exact and mirrored shares
+of repeated 8-beat segments (`bsmapper.eval.repetition`; human: 29% and 14%). Build time
+covers the three difficulties (RTX 3090).
+
+| song | model | build | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- |
+| Stronger, 104 BPM | note_v0 (#32: shift) | 68 s | 3.59 / 2 / 0.00, 0.00 / 0%, 0% | 3.95 / 1.75 / 0.00, 0.00 / 0%, 0% | 4.43 / 2 / 0.00, 0.00 / 0%, 0% |
+|  | note_v1, token only | 58 s | 3.52 / 4 / 0.00, 0.00 / 39%, 0% | 4.88 / 4 / 0.00, 0.00 / 17%, 17% | 5.70 / 2.25 / 0.00, 0.28 / 17%, 0% |
+|  | **note_v1, token + shift (default)** | 66 s | 4.44 / 2 / 0.00, 0.00 / 33%, 17% | 4.89 / 2.75 / 0.00, 0.00 / 0%, 0% | 5.25 / 1.5 / 0.00, 0.00 / 11%, 6% |
+| Toxic, 143 BPM | note_v0 (#32: shift) | 55 s | 4.51 / 3 / 0.00, 0.00 / 0%, 0% | 5.00 / 2.5 / 0.00, 0.00 / 0%, 0% | 5.94 / 2 / 0.00, 0.00 / 0%, 0% |
+|  | note_v1, token only | 57 s | 3.63 / 6 / 0.00, 0.00 / 21%, 19% | 4.21 / 2.5 / 0.00, 0.00 / 6%, 6% | 4.93 / 1.5 / 0.00, 0.00 / 0%, 0% |
+|  | **note_v1, token + shift (default)** | 62 s | 4.14 / 2 / 0.00, 0.00 / 8%, 8% | 4.62 / 2 / 0.00, 0.00 / 2%, 8% | 5.01 / 2 / 0.00, 0.00 / 19%, 2% |
+| trap, 82.5 BPM | note_v0 (#32: shift) | 74 s | 1.01 / 2 / 0.00, 0.00 / 0%, 0% | 2.21 / 1.5 / 0.00, 0.00 / 0%, 0% | 4.18 / 1 / 0.00, 0.00 / 0%, 0% |
+|  | note_v1, token only | 63 s | 1.97 / 1 / 0.00, 0.00 / 0%, 0% | 2.81 / 1.25 / 0.00, 0.00 / 27%, 33% | 3.58 / 1.25 / 0.00, 0.00 / 0%, 20% |
+|  | **note_v1, token + shift (default)** | 53 s | 2.81 / 1.5 / 0.00, 0.00 / 13%, 7% | 3.25 / 2 / 0.00, 0.00 / 0%, 0% | 3.58 / 1.25 / 0.00, 0.00 / 0%, 20% |
+
+Wanted NPS at 0.8 (Hard / Expert / Expert+): Stronger 3.22 / 4.13 / 5.04, Toxic 3.62 /
+4.63 / 5.77, trap 2.99 / 3.85 / 4.64. The human medians at 0.5 are Stronger 2.80 / 3.68
+/ 4.50, Toxic 3.14 / 4.13 / 5.15 and trap 2.60 / 3.43 / 4.14.
+
+- **Density**: with the default, Expert lands at 1.33 / 1.12 / 0.95× the human median on
+  the three songs (note_v0: 1.07 / 1.21 / 0.64). Expert+ lands at 1.17 / 0.97 / 0.86.
+  The trap song, with its uncertain grid, stays the sparsest.
+- **Structure**: note_v0 never copies or mirrors. note_v1 does, at 0–33% exact and
+  0–20% mirrored per difficulty, below the human 29% / 14% on average.
+- **Time**: about the same for both models, 53–74 s for three difficulties. note_v1's
+  decoder is larger, but it needed fewer retries.
 
 ## Intensity
 

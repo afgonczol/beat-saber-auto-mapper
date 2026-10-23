@@ -87,6 +87,9 @@ class GenerateOptions:
     # 0..1 challenge within each difficulty (0.5 typical, 1 about the hardest 10%; see
     # ``intensity``). None = 0.5; entry points fill in ``[generate] intensity`` from the config.
     intensity: float | None = None
+    # 0..1 how much repeated music reuses earlier patterns (note_v1's structure memory);
+    # None = the learned, human-like amount. Entry points fill in ``[generate] repetition``.
+    repetition: float | None = None
     seed: int = 0
     temperature: float = 1.0
     njs: float | None = None  # NJS for every difficulty (overrides the table)
@@ -237,6 +240,8 @@ class Pipeline:
         lead_in = grid.lead_in_s()
         shift = map_beat_shift(lead_in, grid.beats_per_bar)
         tags = read_tags(Path(audio))
+        if getattr(self.generator, "needs_chroma", False):
+            self._add_chroma(Path(audio), result.analysis)
         log.info(
             "%.2f BPM, offset %.3f s, lead-in %.3f s, grid coverage %.0f%%, %d sections",
             grid.bpm,
@@ -257,6 +262,17 @@ class Pipeline:
             title=title or tags.title,
             artist=artist if artist is not None else tags.artist,
         )
+
+    @staticmethod
+    def _add_chroma(audio: Path, analysis: AudioAnalysis) -> None:
+        """Add the ``chroma`` frame feature the structure memory needs (best effort)."""
+        from bsmapper.generation.model import chroma_frames
+
+        n_frames = len(next(iter(analysis.features.values()), []))
+        try:
+            analysis.features["chroma"] = chroma_frames(audio, analysis.frame_rate, n_frames)
+        except Exception as exc:  # no references then; the notes are still generated
+            log.warning("no chroma for %s (%s); generating without structure memory", audio, exc)
 
     def generate_difficulty(
         self,
@@ -280,7 +296,8 @@ class Pipeline:
 
     def _finish(self, raw: DifficultyMap, beatmap: Beatmap, opts) -> DifficultyResult:
         jump = opts.jump_for(raw.difficulty)
-        checker = checker_for(self.checker, opts.intensity)
+        shifts = getattr(self.generator, "shifts_intensity", True)
+        checker = checker_for(self.checker, opts.intensity) if shifts else self.checker
         dmap, report = postprocess(raw, beatmap, checker, jump.njs, jump.reaction_s)
         return DifficultyResult(dmap, report, notes_per_second(dmap, beatmap))
 
@@ -517,6 +534,7 @@ def _request(characteristic, difficulty, opts, seed=None, temperature=None, targ
         target_nps=target_nps,
         style=opts.style,
         intensity=opts.intensity,
+        repetition=opts.repetition,
         njs=opts.jump_for(difficulty).njs,
         seed=opts.seed if seed is None else seed,
         temperature=opts.temperature if temperature is None else temperature,

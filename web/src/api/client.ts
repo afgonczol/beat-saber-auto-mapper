@@ -63,6 +63,7 @@ export async function createJob(audio: File, options: JobOptions): Promise<JobIn
   if (options.style != null) form.append("style", String(options.style));
   form.append("seed", String(options.seed ?? 0));
   if (options.intensity != null) form.append("intensity", String(options.intensity));
+  if (options.repetition != null) form.append("repetition", String(options.repetition));
   if (options.njs != null) form.append("njs", String(options.njs));
   if (options.reaction_time != null) form.append("reaction_time", String(options.reaction_time));
   return json(await fetch(`${BASE}/jobs`, { method: "POST", body: form }));

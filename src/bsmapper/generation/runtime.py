@@ -22,7 +22,12 @@ log = logging.getLogger(__name__)
 
 GeneratorChoice = Literal["auto", "model", "stub"]
 LightingSource = Literal["auto", "model", "rules"]
-DEFAULT_CHECKPOINT = Path("checkpoints") / "note_v0" / "best.pt"
+# Newest first: note_v1 (intensity token, structure memory), then note_v0.
+DEFAULT_CHECKPOINTS = (
+    Path("checkpoints") / "note_v1" / "best.pt",
+    Path("checkpoints") / "note_v0" / "best.pt",
+)
+DEFAULT_CHECKPOINT = DEFAULT_CHECKPOINTS[0]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _models: dict[tuple[str, str], object] = {}
@@ -46,8 +51,10 @@ def find_checkpoint(explicit: Path | str | None = None) -> Path | None:
         if not path.is_file():
             raise FileNotFoundError(f"model checkpoint not found: {path}")
         return path
-    candidates = (configured_checkpoint(), Path.cwd() / DEFAULT_CHECKPOINT)
-    for candidate in (*candidates, REPO_ROOT / DEFAULT_CHECKPOINT):
+    candidates = [configured_checkpoint()]
+    for default in DEFAULT_CHECKPOINTS:
+        candidates += [Path.cwd() / default, REPO_ROOT / default]
+    for candidate in candidates:
         if candidate is not None and candidate.is_file():
             return candidate
     return None

@@ -62,8 +62,20 @@ SILENT_RMS = 0.02  # beat-synchronous RMS (song-relative) below this is silence
 QUIET_SHARE = 0.5  # a gap is in quiet music when its median RMS is below this x the song's
 
 
-def conditioning_nps(difficulty: Difficulty, wanted: float) -> float:
-    return round(wanted * NPS_GAIN[difficulty], 2)
+# note_v1 follows its NPS token much more closely (calibrated in ``NPS_GAIN_BY_VERSION``).
+NPS_GAIN_V1: dict[Difficulty, float] = dict.fromkeys(Difficulty, 1.0)
+NPS_GAIN_BY_VERSION: dict[int, dict[Difficulty, float]] = {1: NPS_GAIN, 2: NPS_GAIN_V1}
+
+
+def gains_for(version: int) -> dict[Difficulty, float]:
+    """Conditioning gains for a checkpoint's tokenizer version (1 = note_v0)."""
+    return NPS_GAIN_BY_VERSION.get(version, NPS_GAIN)
+
+
+def conditioning_nps(
+    difficulty: Difficulty, wanted: float, gains: dict[Difficulty, float] | None = None
+) -> float:
+    return round(wanted * (gains or NPS_GAIN)[difficulty], 2)
 
 
 class Loudness:

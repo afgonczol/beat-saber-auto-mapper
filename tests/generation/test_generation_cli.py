@@ -115,7 +115,9 @@ def test_intensity_option_and_config_default(fake_pipeline, tmp_path: Path) -> N
     assert result.exit_code == 0, result.output
     assert "Intensity: 0.80" in result.output
     result = runner.invoke(cli.app, [*args, "--intensity", "0.3"])
-    assert "Intensity: 0.30" in result.output
+    assert "Intensity: 0.30, repetition: learned" in result.output
+    result = runner.invoke(cli.app, [*args, "--repetition", "0.9"])
+    assert "repetition: 0.90" in result.output
     assert runner.invoke(cli.app, [*args, "--intensity", "2"]).exit_code != 0
 
 

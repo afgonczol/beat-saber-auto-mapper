@@ -68,6 +68,7 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "style": 0.25,
         "seed": 7,
         "intensity": None,
+        "repetition": None,
         "njs": None,
         "reaction_time": None,
     }
