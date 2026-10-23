@@ -76,6 +76,35 @@ def test_generate_and_install(fake_pipeline, tmp_path: Path) -> None:
     assert fake_pipeline["setup"] == ("auto", "auto", None)
 
 
+def test_jump_options(fake_pipeline, tmp_path: Path) -> None:
+    from bsmapper.generation import JUMP_TABLE
+
+    assert cli._parse_jump_option("0.8", "--reaction-time", 0.3, 2.0) == (0.8, {})
+    assert cli._parse_jump_option("Hard=0.9, Expert+=0.75", "x", 0.3, 2.0) == (
+        None,
+        {Difficulty.HARD: 0.9, Difficulty.EXPERT_PLUS: 0.75},
+    )
+    with pytest.raises(Exception, match="outside"):
+        cli._parse_jump_option("5", "--reaction-time", 0.3, 2.0)
+    song = tmp_path / "s.mp3"
+    song.write_bytes(b"x")
+    args = ["generate", str(song), "--out", str(tmp_path / "out"), "--no-zip"]
+    args += ["--difficulties", "Hard,Expert,Expert+", "--reaction-time", "0.9", "--njs", "Hard=14"]
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    by_diff = {d.difficulty: d for d in fake_pipeline["beatmap"].difficulties}
+    bpm = fake_pipeline["beatmap"].bpm
+    from bsmapper.generation.njs import reaction_time
+
+    for diff in (Difficulty.EXPERT, Difficulty.EXPERT_PLUS):
+        d = by_diff[diff]
+        assert reaction_time(d.njs, d.njs_offset, bpm) == pytest.approx(0.9, abs=0.02)
+    hard = by_diff[Difficulty.HARD]
+    assert hard.njs == 14.0
+    rt = reaction_time(hard.njs, hard.njs_offset, bpm)
+    assert rt == pytest.approx(JUMP_TABLE[Difficulty.HARD].reaction_s, abs=0.02)
+
+
 def test_chroma_warning(fake_pipeline, tmp_path: Path) -> None:
     song = tmp_path / "s.mp3"
     song.write_bytes(b"x")

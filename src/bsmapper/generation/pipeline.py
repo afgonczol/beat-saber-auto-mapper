@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bsmapper.generation.density import object_flags
+from bsmapper.generation.njs import JumpOverride
 from bsmapper.generation.postprocess import PostReport, postprocess
 from bsmapper.generation.stub import StubGenerator
 from bsmapper.generation.timing import LEAD_IN_EPS_S, map_beat_shift, song_time_analysis
@@ -74,7 +75,11 @@ class GenerateOptions:
     style: float | None = None  # 0 flowy .. 1 technical
     seed: int = 0
     temperature: float = 1.0
-    njs: float | None = None  # overrides the per-difficulty NJS table
+    njs: float | None = None  # NJS for every difficulty (overrides the table)
+    # Per-difficulty NJS / reaction-time overrides; they win over ``njs``.
+    jump: dict[Difficulty, JumpOverride] = field(default_factory=dict)
+    # Lowest-priority defaults, e.g. ``njs.configured_jumps()`` from ~/.bsmapper/config.toml.
+    jump_defaults: dict[Difficulty, JumpOverride] = field(default_factory=dict)
     environment: str | None = None  # None: picked for the lighting style
     version: FormatVersion = "v3"
     # "model" needs a pipeline with a light model; "auto" uses it when there is one.
@@ -85,6 +90,12 @@ class GenerateOptions:
     walls: bool | None = None
     arcs: bool | None = None
     chains: bool | None = None
+
+    def jump_for(self, difficulty: Difficulty) -> JumpOverride:
+        """NJS / reaction time for ``difficulty``: ``jump``, then ``njs``, then
+        ``jump_defaults`` (the user config); None fields fall back to ``njs.JUMP_TABLE``."""
+        explicit = self.jump.get(difficulty, JumpOverride()).over(JumpOverride(self.njs))
+        return explicit.over(self.jump_defaults.get(difficulty))
 
 
 @dataclass(slots=True)
@@ -254,7 +265,8 @@ class Pipeline:
         return res
 
     def _finish(self, raw: DifficultyMap, beatmap: Beatmap, opts) -> DifficultyResult:
-        dmap, report = postprocess(raw, beatmap, self.checker, njs=opts.njs)
+        jump = opts.jump_for(raw.difficulty)
+        dmap, report = postprocess(raw, beatmap, self.checker, jump.njs, jump.reaction_s)
         return DifficultyResult(dmap, report, notes_per_second(dmap, beatmap))
 
     def _first_pass(
@@ -451,7 +463,7 @@ def _request(characteristic, difficulty, opts, seed=None, temperature=None, targ
         difficulty=difficulty,
         target_nps=target_nps,
         style=opts.style,
-        njs=opts.njs,
+        njs=opts.jump_for(difficulty).njs,
         seed=opts.seed if seed is None else seed,
         temperature=opts.temperature if temperature is None else temperature,
         **flags,

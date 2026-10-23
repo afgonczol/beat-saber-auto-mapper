@@ -8,6 +8,8 @@ Standard, from the ratio of their medians. Values stay inside Standard's interqu
 
 from __future__ import annotations
 
+import numpy as np
+
 from bsmapper.schema import Characteristic, Difficulty
 
 # Standard: nps = slope * bpm + intercept, clamped to [lo, hi].
@@ -35,9 +37,64 @@ def target_nps(difficulty: Difficulty, characteristic: Characteristic, bpm: floa
     return round(nps * MODE_SHARE.get(characteristic, 1.0), 2)
 
 
-# The v0 model reaches about 75-80% of the NPS it is conditioned on (Stronger, Expert+ and
-# Normal at several targets), so heuristic targets are scaled up by this before conditioning.
-NPS_CONDITIONING_GAIN = 1.25
+# Conditioning NPS = wanted NPS x gain. v0 reaches only part of the NPS it is conditioned on;
+# these are 1 / the median achieved/requested ratio on Stronger, Toxic and a trap song (seed
+# 0, rule masks on, after post-processing). Songs vary a lot (0.4 to 1.2), which is what the
+# per-window feedback in ``model`` is for.
+NPS_GAIN: dict[Difficulty, float] = {
+    Difficulty.EASY: 1.12,
+    Difficulty.NORMAL: 1.12,
+    Difficulty.HARD: 1.27,
+    Difficulty.EXPERT: 1.22,
+    Difficulty.EXPERT_PLUS: 1.33,
+}
+
+# Longest gap between notes (beats) that may stay in a loud passage; longer ones only where
+# the music is quiet. The per-window feedback resamples windows that break this.
+GAP_LIMIT_BEATS: dict[Difficulty, float] = {
+    Difficulty.EASY: 8.0,
+    Difficulty.NORMAL: 6.0,
+    Difficulty.HARD: 4.0,
+    Difficulty.EXPERT: 2.0,
+    Difficulty.EXPERT_PLUS: 2.0,
+}
+SILENT_RMS = 0.02  # beat-synchronous RMS (song-relative) below this is silence
+QUIET_SHARE = 0.5  # a gap is in quiet music when its median RMS is below this x the song's
+
+
+def conditioning_nps(difficulty: Difficulty, wanted: float) -> float:
+    return round(wanted * NPS_GAIN[difficulty], 2)
+
+
+class Loudness:
+    """Song-relative loudness per tick (the RMS column of the model features)."""
+
+    def __init__(self, rms_ticks: np.ndarray) -> None:
+        self.rms = np.asarray(rms_ticks, dtype=np.float64)
+        active = self.rms[self.rms > SILENT_RMS]
+        self.typical = float(np.median(active)) if len(active) else 1.0
+        self.quiet = QUIET_SHARE * self.typical
+
+    def activity(self, start_beat: float, end_beat: float) -> float:
+        """0 (silent) .. 1 (typical or louder) over a span of beats."""
+        seg = self.rms[int(start_beat * 24) : int(end_beat * 24)]
+        if len(seg) == 0:
+            return 0.0
+        return float(np.clip(seg.mean() / max(self.typical, 1e-6), 0.0, 1.0))
+
+    def loud(self, start_beat: float, end_beat: float) -> bool:
+        seg = self.rms[int(start_beat * 24) : int(end_beat * 24)]
+        return len(seg) > 0 and float(np.median(seg)) >= self.quiet
+
+
+def loud_gaps(beats: list[float], loudness: Loudness, limit: float) -> list[float]:
+    """Gaps between consecutive note times longer than ``limit`` over loud music."""
+    out = []
+    for a, b in zip(beats, beats[1:], strict=False):
+        if b - a > limit + 1e-6 and loudness.loud(a, b):
+            out.append(b - a)
+    return out
+
 
 # Share of dataset v0 train difficulties that use each object type (bombs, arcs, chains;
 # walls are in about 90% everywhere). A type is on by default when at least ~45% of human

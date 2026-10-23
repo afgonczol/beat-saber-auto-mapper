@@ -332,6 +332,16 @@ export interface components {
              * @default 0
              */
             seed: number;
+            /**
+             * Njs
+             * @description NJS for every difficulty; omit for defaults.
+             */
+            njs?: number | null;
+            /**
+             * Reaction Time
+             * @description Seconds from spawn to strike for Expert and Expert+; omit for defaults.
+             */
+            reaction_time?: number | null;
         };
         /** Bomb */
         Bomb: {
@@ -587,6 +597,16 @@ export interface components {
              * @default 0
              */
             seed: number;
+            /**
+             * Njs
+             * @description NJS for every difficulty; null = defaults.
+             */
+            njs?: number | null;
+            /**
+             * Reaction Time
+             * @description Seconds from spawn to strike for Expert and Expert+ (lower difficulties keep their defaults); null = defaults (0.8 s and 0.7 s).
+             */
+            reaction_time?: number | null;
         };
         /**
          * JobStatus

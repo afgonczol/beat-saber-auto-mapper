@@ -782,6 +782,34 @@
             "type": "integer",
             "title": "Seed",
             "default": 0
+          },
+          "njs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 40.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Njs",
+            "description": "NJS for every difficulty; omit for defaults."
+          },
+          "reaction_time": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Time",
+            "description": "Seconds from spawn to strike for Expert and Expert+; omit for defaults."
           }
         },
         "type": "object",
@@ -1310,6 +1338,34 @@
             "type": "integer",
             "title": "Seed",
             "default": 0
+          },
+          "njs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 40.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Njs",
+            "description": "NJS for every difficulty; null = defaults."
+          },
+          "reaction_time": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Time",
+            "description": "Seconds from spawn to strike for Expert and Expert+ (lower difficulties keep their defaults); null = defaults (0.8 s and 0.7 s)."
           }
         },
         "type": "object",

@@ -16,7 +16,9 @@ from pathlib import Path
 
 from bsmapper.generation import (
     GenerateOptions,
+    JumpOverride,
     Pipeline,
+    configured_jumps,
     make_pipeline,
     replace_difficulty,
     safe_folder_name,
@@ -28,7 +30,7 @@ from bsmapper.generation.pipeline import (
     Song,
     song_notes,
 )
-from bsmapper.schema import Beatmap
+from bsmapper.schema import Beatmap, Difficulty
 from bsmapper.server.models import DifficultyWarning, JobOptions, RegenerateRequest
 from bsmapper.server.runner import JobInput, JobResult, ProgressFn
 from bsmapper.tokenizer import notes_per_second
@@ -39,12 +41,19 @@ STUB_NOTE = "Notes come from the placeholder stub generator, not the ML model."
 
 
 def _options(options: JobOptions) -> GenerateOptions:
+    jump = {}
+    if options.reaction_time is not None:
+        override = JumpOverride(reaction_s=options.reaction_time)
+        jump = {Difficulty.EXPERT: override, Difficulty.EXPERT_PLUS: override}
     return GenerateOptions(
         modes=list(options.modes),
         difficulties=list(options.difficulties),
         lighting=options.lighting,
         style=options.style,
         seed=options.seed,
+        njs=options.njs,
+        jump=jump,
+        jump_defaults=configured_jumps(),
     )
 
 

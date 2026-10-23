@@ -12,7 +12,13 @@ placeholder notes (**not** ML) when there is no model. See docs/GENERATION.md.
 from bsmapper.generation.density import target_nps
 from bsmapper.generation.install import GameConfig, install_map, load_config
 from bsmapper.generation.model import ModelGenerator, ModelSettings, RuleMasker, song_features
-from bsmapper.generation.njs import JUMP_TABLE, njs_and_offset, reaction_time
+from bsmapper.generation.njs import (
+    JUMP_TABLE,
+    JumpOverride,
+    configured_jumps,
+    njs_and_offset,
+    reaction_time,
+)
 from bsmapper.generation.pipeline import (
     DifficultyResult,
     GenerateOptions,
@@ -29,6 +35,7 @@ from bsmapper.generation.timing import song_time_analysis, tempo_beatmap
 
 __all__ = [
     "JUMP_TABLE",
+    "JumpOverride",
     "PROFILES",
     "STUB_LABEL",
     "DifficultyResult",
@@ -44,6 +51,7 @@ __all__ = [
     "Song",
     "StubGenerator",
     "StubProfile",
+    "configured_jumps",
     "dedupe",
     "find_checkpoint",
     "fix_with_rules",

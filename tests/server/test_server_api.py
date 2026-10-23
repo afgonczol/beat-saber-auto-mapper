@@ -67,6 +67,8 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "lighting": "chroma",
         "style": 0.25,
         "seed": 7,
+        "njs": None,
+        "reaction_time": None,
     }
 
 

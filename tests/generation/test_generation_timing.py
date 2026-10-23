@@ -56,6 +56,40 @@ def test_njs_offset_hits_the_reaction_time(bpm: float, diff: Difficulty) -> None
     assert reaction_time(njs, offset, bpm) == pytest.approx(target, abs=tolerance)
 
 
+def test_reaction_time_override() -> None:
+    njs, offset = njs_and_offset(Difficulty.EXPERT_PLUS, 104.0, reaction_s=0.9)
+    assert njs == 17.0
+    assert reaction_time(njs, offset, 104.0) == pytest.approx(0.9, abs=0.026 * 60 / 104)
+    # Expert+ defaults: NJS 17, 0.7 s, about 23.8 m of jump distance
+    njs, offset = njs_and_offset(Difficulty.EXPERT_PLUS, 120.0)
+    assert 2 * njs * reaction_time(njs, offset, 120.0) == pytest.approx(23.8, abs=0.5)
+
+
+def test_jump_overrides_resolve_in_order(tmp_path) -> None:
+    from bsmapper.generation import GenerateOptions, JumpOverride, configured_jumps
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[jump."Expert+"]\nnjs = 18\nreaction_time = 0.75\n[jump.Hard]\nreaction_time = 0.95\n',
+        encoding="utf-8",
+    )
+    defaults = configured_jumps(cfg)
+    assert defaults[Difficulty.EXPERT_PLUS] == JumpOverride(18, 0.75)
+    opts = GenerateOptions(
+        njs=15.0,
+        jump={Difficulty.EXPERT_PLUS: JumpOverride(reaction_s=0.9)},
+        jump_defaults=defaults,
+    )
+    assert opts.jump_for(Difficulty.EXPERT_PLUS) == JumpOverride(15.0, 0.9)
+    assert opts.jump_for(Difficulty.HARD) == JumpOverride(15.0, 0.95)
+    assert GenerateOptions(jump_defaults=defaults).jump_for(Difficulty.EXPERT_PLUS) == (
+        JumpOverride(18, 0.75)
+    )
+    cfg.write_text("[jump.Insane]\nnjs = 30\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Insane"):
+        configured_jumps(cfg)
+
+
 def test_njs_override_and_game_halving() -> None:
     assert njs_and_offset(Difficulty.EXPERT, 120.0, njs=22.0)[0] == 22.0
     assert default_hjd(10.0, 60.0) == 1.0  # 10 * 1 s * 4 beats > 18 m: halved twice

@@ -135,10 +135,29 @@ def _api(manager: JobManager) -> APIRouter:
             Form(ge=0.0, le=1.0, description="0 = flowy, 1 = technical; omit for no preference."),
         ] = None,
         seed: Annotated[int, Form()] = 0,
+        njs: Annotated[
+            float | None,
+            Form(ge=1.0, le=40.0, description="NJS for every difficulty; omit for defaults."),
+        ] = None,
+        reaction_time: Annotated[
+            float | None,
+            Form(
+                ge=0.3,
+                le=2.0,
+                description="Seconds from spawn to strike for Expert and Expert+; omit for "
+                "defaults.",
+            ),
+        ] = None,
     ) -> JobInfo:
         """Upload a song and queue a generation job. Options are multipart form fields."""
         options = JobOptions(
-            modes=modes, difficulties=difficulties, lighting=lighting, style=style, seed=seed
+            modes=modes,
+            difficulties=difficulties,
+            lighting=lighting,
+            style=style,
+            seed=seed,
+            njs=njs,
+            reaction_time=reaction_time,
         )
         try:
             job = manager.submit(audio.filename or "song", audio.file, options)

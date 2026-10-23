@@ -6,7 +6,8 @@
    object that breaks a hard ("error") rule is repaired when a nearby allowed variant
    exists (notes: another direction, then another cell; rotations: a smaller turn),
    otherwise dropped. After this the checker reports no errors.
-4. NJS and start-beat offset from ``njs.JUMP_TABLE`` (the NJS can be overridden).
+4. NJS and start-beat offset from ``njs.JUMP_TABLE`` (NJS and reaction time can be
+   overridden).
 """
 
 from __future__ import annotations
@@ -202,6 +203,7 @@ def postprocess(
     beatmap: Beatmap,
     checker: RuleChecker | None = None,
     njs: float | None = None,
+    reaction_s: float | None = None,
 ) -> tuple[DifficultyMap, PostReport]:
     """Snap, dedupe, rule-fix and set NJS/offset from the table (``njs`` overrides its NJS)."""
     checker = checker or RuleChecker()
@@ -210,7 +212,9 @@ def postprocess(
     report.off_grid = snap.off_grid
     report.snap_dropped = Counter(snap.dropped)
     deduped, report.duplicates = dedupe(snapped)
-    deduped.njs, deduped.njs_offset = njs_and_offset(deduped.difficulty, beatmap.bpm, njs)
+    deduped.njs, deduped.njs_offset = njs_and_offset(
+        deduped.difficulty, beatmap.bpm, njs, reaction_s
+    )
     fixed, report.repaired, report.dropped = fix_with_rules(deduped, beatmap, checker)
     report.issues = checker.check(fixed, beatmap)
     return fixed, report
