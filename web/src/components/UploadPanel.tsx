@@ -34,6 +34,9 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   const [seed, setSeed] = useState(0);
   // Note timing; empty = the server's defaults.
   const [reactionTime, setReactionTime] = useState("");
+  // Intensity; "default" = the server's configured default.
+  const [useIntensity, setUseIntensity] = useState(false);
+  const [intensity, setIntensity] = useState(0.8);
   const [njs, setNjs] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +58,7 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
       difficulties,
       lighting,
       style: useStyle ? style : null,
+      intensity: useIntensity ? intensity : null,
       seed,
       reaction_time: reactionTime === "" ? null : Number(reactionTime),
       njs: njs === "" ? null : Number(njs),
@@ -177,6 +181,32 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
             />
             <span>Technical</span>
             <output>{useStyle ? style.toFixed(2) : "—"}</output>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>
+            Intensity
+            <label className="inline-toggle">
+              <input type="checkbox" checked={!useIntensity} onChange={() => setUseIntensity(!useIntensity)} />
+              default
+            </label>
+          </legend>
+          <div className={`style-slider ${useIntensity ? "" : "disabled"}`}>
+            <span>Typical</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={intensity}
+              disabled={!useIntensity}
+              onChange={(e) => setIntensity(Number(e.target.value))}
+              aria-label="Intensity within each difficulty"
+              title="0.5 = a typical human map for the difficulty, 1 = about the hardest 10%"
+            />
+            <span>Hardest</span>
+            <output>{useIntensity ? intensity.toFixed(2) : "—"}</output>
           </div>
         </fieldset>
 

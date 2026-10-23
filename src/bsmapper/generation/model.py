@@ -8,8 +8,11 @@ grammar masks, temperature / top-p / seed and classifier-free guidance on STYLE.
 module adds what generation needs on top:
 
 - **conditioning**: ``Conditioning.from_request``. ``target_nps`` is the NPS wanted in
-  the map (the per-difficulty heuristic from ``density`` when it is None); the model is
-  conditioned on it times ``density.NPS_GAIN``, since v0 undershoots its conditioning.
+  the map; when it is None it comes from ``intensity.plan`` (the human NPS percentile for
+  the request's intensity). The model is conditioned on it times ``density.NPS_GAIN``,
+  since v0 undershoots its conditioning. Above intensity 0.75 a label is conditioned on
+  the next difficulty's DIFF token (``intensity``), and its rules ceilings are relaxed to
+  match (``intensity.checker_for``).
 - **density feedback**: every difficulty is decoded next to a copy conditioned on a
   higher NPS (``ModelSettings.density_boosts``). After each window the candidate that best
   fits the window's expected note count (wanted NPS x the music's loudness there) and
@@ -41,8 +44,9 @@ from bsmapper.generation.density import (
     Loudness,
     conditioning_nps,
     loud_gaps,
-    target_nps,
 )
+from bsmapper.generation.intensity import SHIFT_ABOVE, checker_for, conditioning_cap
+from bsmapper.generation.intensity import plan as intensity_plan
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.generation.timing import tempo_beatmap
 from bsmapper.interfaces import AudioAnalysis, GenerationRequest
@@ -55,6 +59,7 @@ from bsmapper.schema import (
     Characteristic,
     Color,
     CutDirection,
+    Difficulty,
     DifficultyMap,
     Note,
     RotationEvent,
@@ -157,12 +162,13 @@ class RuleMasker:
         requests: Sequence[GenerationRequest],
         metas: Sequence[DifficultyMap],
         beatmap: Beatmap,
-        checker: RuleChecker,
+        checker: RuleChecker | Sequence[RuleChecker],
         rules: bool = True,
     ) -> None:
         self.requests = list(requests)
         self.static = [request_mask(r) for r in requests]
-        self.states = [checker.state(m, beatmap) for m in metas]
+        checkers = list(checker) if isinstance(checker, Sequence) else [checker] * len(metas)
+        self.states = [c.state(m, beatmap) for c, m in zip(checkers, metas, strict=True)]
         self.rules = rules
         self._seen: list[tuple[int, int]] = [(0, 0)] * len(requests)  # (window, events fed)
         self._cache: dict[tuple, bool] = {}
@@ -342,6 +348,7 @@ class ModelGenerator:
         self.last_masked_steps = 0
         # Per request of the last generate_many: (windows from a boosted candidate, windows).
         self.last_boosted: list[tuple[int, int]] = []
+        self.last_plans: list = []  # intensity.IntensityPlan per request of the last call
 
     def generate(self, analysis: AudioAnalysis, request: GenerationRequest) -> DifficultyMap:
         return self.generate_many(analysis, [request])[0]
@@ -350,7 +357,15 @@ class ModelGenerator:
         self, analysis: AudioAnalysis, requests: Sequence[GenerationRequest]
     ) -> list[DifficultyMap]:
         beatmap = tempo_beatmap(analysis)
-        requests = [self._with_nps(r, beatmap.bpm) for r in requests]
+        plans = [
+            intensity_plan(r.difficulty, r.characteristic, beatmap.bpm, r.intensity)
+            for r in requests
+        ]
+        requests = [
+            r if r.target_nps is not None else replace(r, target_nps=p.wanted_nps)
+            for r, p in zip(requests, plans, strict=True)
+        ]
+        self.last_plans = plans
         groups: dict[tuple[int, float], list[int]] = {}
         for i, r in enumerate(requests):
             groups.setdefault((r.seed, r.temperature), []).append(i)
@@ -366,14 +381,6 @@ class ModelGenerator:
                 out[i], self.last_boosted[i] = dmap, b
         return out  # type: ignore[return-value]
 
-    @staticmethod
-    def _with_nps(request: GenerationRequest, bpm: float) -> GenerationRequest:
-        """Fill in the wanted NPS (the heuristic) when the request has none."""
-        if request.target_nps is not None:
-            return request
-        nps = target_nps(request.difficulty, request.characteristic, bpm)
-        return replace(request, target_nps=nps)
-
     def _decode(
         self,
         feats: np.ndarray,
@@ -386,22 +393,32 @@ class ModelGenerator:
 
         s = self.settings
         rows: list[GenerationRequest] = []  # every candidate, base first per request
+        conds_as: list[Difficulty] = []  # the DIFF token each row is conditioned on
         groups: list[list[int]] = []
         for r in requests:
-            base = conditioning_nps(r.difficulty, r.target_nps or 0.0)
+            as_ = intensity_plan(r.difficulty, r.characteristic, beatmap.bpm, r.intensity)
+            cond_diff = as_.condition_as
+            # Above 0.75 the targets reach the top NPS buckets; keep the boosted copy within
+            # what human maps of that difficulty do (intensity 0.5 is left as in #31).
+            cap = math.inf
+            if as_.intensity > SHIFT_ABOVE:
+                cap = conditioning_cap(cond_diff, r.characteristic, beatmap.bpm)
+            base = min(conditioning_nps(cond_diff, r.target_nps or 0.0), cap)
             factors = (1.0, *s.density_boosts) if r.target_nps else (1.0,)
             groups.append(list(range(len(rows), len(rows) + len(factors))))
-            rows += [replace(r, target_nps=round(base * f, 2)) for f in factors]
+            rows += [replace(r, target_nps=round(min(base * f, cap), 2)) for f in factors]
+            conds_as += [cond_diff] * len(factors)
         metas = []
-        for r in rows:
+        for r in rows:  # NJS / reaction time follow the label
             njs, offset = njs_and_offset(r.difficulty, beatmap.bpm, r.njs)
             metas.append(DifficultyMap(r.characteristic, r.difficulty, njs=njs, njs_offset=offset))
-        masker = RuleMasker(rows, metas, beatmap, self.checker, rules=s.rule_masks)
+        checkers = [checker_for(self.checker, r.intensity) for r in rows]
+        masker = RuleMasker(rows, metas, beatmap, checkers, rules=s.rule_masks)
         feedback = DensityFeedback(
             masker,
             groups,
             [r.target_nps or 0.0 for r in requests],
-            [GAP_LIMIT_BEATS[r.difficulty] for r in requests],
+            [GAP_LIMIT_BEATS[conds_as[g[0]]] for g in groups],
             Loudness(feats[:, -1]),
             beatmap,
             s.boost_margin,
@@ -414,13 +431,21 @@ class ModelGenerator:
             context_events=s.context_events,
             max_body_tokens=s.max_body_tokens,
         )
-        conds = [Conditioning.from_request(r) for r in rows]
+        conds = [
+            Conditioning.from_request(replace(r, difficulty=d))
+            for r, d in zip(rows, conds_as, strict=True)
+        ]
         n_windows = max(1, math.ceil(feats.shape[0] / WINDOW_TICKS))
         sampler = NoteSampler(self.model)
         callbacks = {"mask_fn": masker.mask, "on_window": feedback.on_window}
         windows = sampler.generate(feats, conds, options, n_windows=n_windows, **callbacks)
         self.last_masked_steps += masker.masked_steps
-        dmaps = [self.tokenizer.decode(windows[g[0]], meta=metas[g[0]]) for g in groups]
+        dmaps = []
+        for g in groups:
+            meta = metas[g[0]]
+            decoded = self.tokenizer.decode(windows[g[0]], meta=meta)
+            # The prefix names the conditioning difficulty; the map keeps its label.
+            dmaps.append(replace(decoded, difficulty=meta.difficulty))
         boosted = [(n, feedback.windows) for n in feedback.boosted]  # type: ignore[union-attr]
         return dmaps, boosted
 

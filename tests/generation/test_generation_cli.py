@@ -105,6 +105,20 @@ def test_jump_options(fake_pipeline, tmp_path: Path) -> None:
     assert rt == pytest.approx(JUMP_TABLE[Difficulty.HARD].reaction_s, abs=0.02)
 
 
+def test_intensity_option_and_config_default(fake_pipeline, tmp_path: Path) -> None:
+    song = tmp_path / "s.mp3"
+    song.write_bytes(b"x")
+    args = ["generate", str(song), "--out", str(tmp_path / "out"), "--no-zip"]
+    args += ["--difficulties", "Hard"]
+    (tmp_path / "config.toml").write_text("[generate]\nintensity = 0.8\n", encoding="utf-8")
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert "Intensity: 0.80" in result.output
+    result = runner.invoke(cli.app, [*args, "--intensity", "0.3"])
+    assert "Intensity: 0.30" in result.output
+    assert runner.invoke(cli.app, [*args, "--intensity", "2"]).exit_code != 0
+
+
 def test_chroma_warning(fake_pipeline, tmp_path: Path) -> None:
     song = tmp_path / "s.mp3"
     song.write_bytes(b"x")

@@ -17,6 +17,7 @@ bsmapper generate song.mp3                                  # 5 Standard difficu
 bsmapper generate song.mp3 --modes Standard,OneSaber,90,360 --difficulties Hard,Expert+ --style 0.7
 bsmapper generate song.mp3 --lighting chroma --install      # warns if Plugins/Chroma.dll is missing
 bsmapper generate song.mp3 --generator stub --lighting-source rules   # no model at all
+bsmapper generate song.mp3 --intensity 0.8 --install          # harder than a typical map
 bsmapper serve            # web UI on the same pipeline; --mock for canned maps during UI work
 ```
 
@@ -144,6 +145,74 @@ typical level.
 - A second boosted copy (1.6× and 2.4×) closed Stronger's Expert+ gap. But Toxic
   overshot by about 25%, and decoding took 60–70 s instead of about 40 s, so the default
   keeps one.
+
+## Intensity
+
+`--intensity` (0 to 1) sets how hard a map is *within* its label (`generation.intensity`).
+0.5 is a typical human map for the difficulty and BPM, and 1.0 is about the hardest 10%.
+Without the option, `[generate] intensity` in `~/.bsmapper/config.toml` is used, else 0.5.
+The server's `intensity` job option and the web UI's Intensity slider work the same way.
+
+- **Target density**: intensity maps linearly to a percentile of the human NPS spread
+  for that difficulty, from p10 at 0 to p90 at 1. The spread is NPS over the fitted
+  median at the map's BPM, from the v0 Standard train split.
+- **Above 0.75**: the v0 model has no intensity token, so a label is decoded with the
+  next difficulty's DIFF token (Hard as Expert, Expert as Expert+) at its own percentile
+  target. Expert+ cannot shift, so it gets the top of its NPS range, plus the per-window
+  density feedback. The gap limit is the harder difficulty's.
+- **NJS and reaction time** always follow the label's table, so the note speed doesn't
+  change.
+- **Rule ceilings** follow the shift, but only up to what human maps of the harder
+  difficulty do:
+  - the NPS ceiling (densest 2 s) goes up to that difficulty's human p95: Hard 9.5,
+    Expert 12, Expert+ 14;
+  - the minimum same-hand swing interval goes down to its human p5: 0.135 / 0.117 /
+    0.098 s.
+
+  For example, Expert at 0.8 gets 14 NPS and 0.098 s; Expert+ keeps its own 20 NPS and
+  0.08 s.
+- **note_v1**: once the model has an intensity token, `intensity.plan(...,
+  model_intensity=True)` keeps the label and drops the shift. The percentile targets stay
+  the same.
+
+Wanted NPS at 104 BPM (Standard):
+
+| intensity | Easy | Normal | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- |
+| 0.5 | 1.45 | 2.00 | 2.80 | 3.68 | 4.50 |
+| 0.8 (shifted) | 1.81 | 2.40 | 3.22 | 4.13 | 5.04 |
+| 1.0 (shifted) | 2.24 | 2.85 | 3.70 | 4.61 | 5.64 |
+
+Two guards apply above 0.75:
+
+- **Conditioning cap**: every candidate's conditioning NPS is capped at the human p95 of
+  the difficulty it is decoded as (× its gain). Without the cap, intensity 1.0 pushed the
+  boosted copy into the top buckets (12+ NPS), where v0 saw few maps. Its output then got
+  erratic, often *sparser* than at 0.8; for example the trap song's Expert fell to 1.37.
+- **Not easier than typical**: a shifted label under 85% of its wanted NPS is decoded
+  once more with the next seed, and the closer result is kept. If it is still under 80%
+  of the label's typical (intensity 0.5) NPS, it is decoded unshifted at 0.75.
+
+Measured with `note_v0/best.pt`, seed 0, Standard. Each cell is NPS / longest gap over
+loud music in beats. Rule errors are 0 per 100 notes everywhere, and warnings are at most
+0.91 per 100 (Toxic Easy at 0.8). 0.5 is the PR #31 behaviour. 0.8 and 1.0 include the
+conditioning cap, but not the next-seed retry, which was added after this run.
+
+| song | intensity | Easy | Normal | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Stronger, 104 BPM | 0.5 | 1.47 / 5 | 1.83 / 3 | 2.69 / 4 | 3.52 / 2.33 | 4.24 / 4 |
+| | 0.8 | 1.84 / 4 | 2.76 / 4 | 2.98 / 3 | 3.51 / 1.62 | 4.40 / 1.5 |
+| | 1.0 | 2.24 / 4 | 2.99 / 5 | 3.47 / 2 | 4.84 / 4 | 5.34 / 4 |
+| Toxic, 143 BPM | 0.5 | 1.65 / 4 | 2.22 / 7 | 3.38 / 6.5 | 4.60 / 2 | 5.13 / 2.96 |
+| | 0.8 | 2.22 / 10 | 3.46 / 5 | 4.38 / 2 | 5.67 / 2 | 6.12 / 3 |
+| trap, 82.5 BPM | 0.5 | 0.92 / 4 | 1.20 / 2.5 | 1.61 / 2 | 2.69 / 0.5 | 2.90 / 2 |
+| | 0.8 | 0.90 / 4 | 2.07 / 1.5 | 2.32 / 1.5 | 2.76 / 0.5 | 3.51 / 1 |
+| | 1.0 | 1.47 / 2 | 1.87 / 3.5 | 2.32 / 1.5 | 2.77 / 0.5 | 3.53 / 1 |
+
+v0 varies a lot between seeds. In an earlier run without the cap, Stronger Expert at 0.8
+came out at 4.18 NPS; in the run above it came out at 3.51, the same as at 0.5. That
+case is what the next-seed retry is for. Note timing is unchanged at every intensity:
+Expert 0.80 s, Expert+ 0.69 s.
 
 ## NJS and offset
 

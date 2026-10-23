@@ -105,3 +105,14 @@ def test_bad_upload_fails_the_job(tmp_path: Path) -> None:
         job = client.post("/api/jobs", files=files, data={"modes": ["Standard"]}).json()
         info = wait_done(client, job["id"])
         assert info["status"] == "failed" and info["error"]
+
+
+def test_job_intensity_falls_back_to_the_config(monkeypatch, tmp_path: Path) -> None:
+    from bsmapper.server.models import JobOptions
+    from bsmapper.server.pipeline_runner import _options
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[generate]\nintensity = 0.8\n", encoding="utf-8")
+    monkeypatch.setenv("BSMAPPER_CONFIG", str(cfg))
+    assert _options(JobOptions()).intensity == 0.8
+    assert _options(JobOptions(intensity=0.3)).intensity == 0.3

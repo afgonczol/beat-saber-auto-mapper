@@ -135,6 +135,15 @@ def _api(manager: JobManager) -> APIRouter:
             Form(ge=0.0, le=1.0, description="0 = flowy, 1 = technical; omit for no preference."),
         ] = None,
         seed: Annotated[int, Form()] = 0,
+        intensity: Annotated[
+            float | None,
+            Form(
+                ge=0.0,
+                le=1.0,
+                description="0.5 = typical human map, 1 = about the hardest 10%; omit for the "
+                "configured default.",
+            ),
+        ] = None,
         njs: Annotated[
             float | None,
             Form(ge=1.0, le=40.0, description="NJS for every difficulty; omit for defaults."),
@@ -156,6 +165,7 @@ def _api(manager: JobManager) -> APIRouter:
             lighting=lighting,
             style=style,
             seed=seed,
+            intensity=intensity,
             njs=njs,
             reaction_time=reaction_time,
         )
