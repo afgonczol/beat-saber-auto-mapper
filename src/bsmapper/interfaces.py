@@ -55,6 +55,12 @@ class GenerationRequest:
     difficulty: Difficulty
     target_nps: float | None = None  # None = model/heuristic picks
     style: float | None = None  # 0 = flowy .. 1 = technical; None = no preference
+    # 0..1 challenge within the difficulty label: 0.5 = typical human map for that label and
+    # BPM, 1.0 = about the hardest 10%. None = the user's configured default.
+    intensity: float | None = None
+    # 0..1 how strongly repeated music reuses earlier patterns (copy/mirror/vary);
+    # None = learned human-like behaviour.
+    repetition: float | None = None
     njs: float | None = None
     seed: int = 0
     temperature: float = 1.0
