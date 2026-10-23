@@ -5,9 +5,11 @@ broadcast to ``(batch, heads, queries, keys)``.
 
 ``qk_norm`` (note_v1) applies a LayerNorm per head to queries and keys before the
 dot product. That bounds the attention logits, which grew without limit in the first
-note_v1 run and made it diverge right after warmup. Under bf16 autocast the norms run in
-fp32, and SDPA's flash and memory-efficient kernels keep the softmax statistics in fp32.
-Blocks without it (note_v0) have exactly the old parameters.
+note_v1 run and made it diverge right after warmup. The norms run in the compute dtype
+(bf16 under autocast) while their kernel accumulates the statistics in fp32; letting
+autocast return fp32 q/k cost about 2 GB more activations for nothing. SDPA's flash and
+memory-efficient kernels keep the softmax statistics in fp32 too. Blocks without it
+(note_v0) have exactly the old parameters.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ class MultiHeadAttention(nn.Module):
         k, v = self.kv(x).chunk(2, dim=-1)
         k, v = self._split(k), self._split(v)
         if self.k_norm is not None:
-            k = self.k_norm(k).to(v.dtype)
+            k = _head_norm(self.k_norm, k, v.dtype)
         return k, v
 
     def attend(
@@ -75,7 +77,7 @@ class MultiHeadAttention(nn.Module):
     ) -> Tensor:
         q = self._split(self.q(x))
         if self.q_norm is not None:
-            q = self.q_norm(q).to(v.dtype)
+            q = _head_norm(self.q_norm, q, v.dtype)
         y = F.scaled_dot_product_attention(
             q,
             k,
@@ -96,6 +98,13 @@ class MultiHeadAttention(nn.Module):
     ) -> Tensor:
         k, v = self.project_kv(x if context is None else context)
         return self.attend(x, k, v, mask, causal)
+
+
+def _head_norm(norm: nn.LayerNorm, x: Tensor, dtype: torch.dtype) -> Tensor:
+    """``norm(x)`` in ``dtype`` even under autocast (which would upcast it to fp32)."""
+    with torch.autocast(x.device.type, enabled=False):
+        w, b = norm.weight.to(dtype), norm.bias.to(dtype)
+        return F.layer_norm(x.to(dtype), norm.normalized_shape, w, b, norm.eps)
 
 
 class FeedForward(nn.Sequential):
