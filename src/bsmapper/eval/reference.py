@@ -27,6 +27,8 @@ LEVELS = tuple(Difficulty)  # Easy .. ExpertPlus, index = level
 BPM_BAND = 0.15  # +-15 % BPM
 MIN_NEIGHBOURS = 60
 MIN_MODE_ROWS = 40  # fewer human maps of a mode and difficulty: use Standard's
+MIN_STEP_NPS = 0.25  # smallest NPS gap between neighbouring levels of the ladder
+LEVEL_RANGE = (-2.0, 6.0)  # equivalent levels are clipped to two levels past either end
 
 
 class HumanReference:
@@ -78,12 +80,15 @@ class HumanReference:
         ladder = self.median_ladder(mode, bpm)
         if not math.isfinite(nps) or any(not math.isfinite(m) for m in ladder):
             return float("nan")
-        ladder = list(np.maximum.accumulate(ladder))  # keep it monotone
+        # Rare modes at extreme BPMs can have a level no denser than the one below it;
+        # keep the rungs at least MIN_STEP_NPS apart so the scale stays finite.
+        for i in range(1, len(ladder)):
+            ladder[i] = max(ladder[i], ladder[i - 1] + MIN_STEP_NPS)
         # Linear between neighbouring medians; past either end, the end segment's slope.
         last = len(ladder) - 2
         i = next((i for i in range(last) if nps <= ladder[i + 1]), last)
-        span = max(ladder[i + 1] - ladder[i], 1e-6)
-        return i + (nps - ladder[i]) / span
+        level = i + (nps - ladder[i]) / (ladder[i + 1] - ladder[i])
+        return float(np.clip(level, LEVEL_RANGE[0], LEVEL_RANGE[1]))
 
     def step_offset(self, mode: Characteristic, diff: Difficulty, bpm: float, nps: float):
         return self.equivalent_level(mode, bpm, nps) - LEVELS.index(diff)

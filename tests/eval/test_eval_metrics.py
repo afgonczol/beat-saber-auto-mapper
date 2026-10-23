@@ -113,6 +113,7 @@ def test_percentile_and_reference_ladder() -> None:
     assert ref.step_offset(S, E, 120.0, 3.0) == pytest.approx(-1.0, abs=0.05)
     assert ref.step_offset(S, E, 120.0, 4.5) == pytest.approx(0.5, abs=0.05)
     assert ref.equivalent_level(S, 120.0, 7.0) == pytest.approx(6.0, abs=0.05)  # past Expert+
+    assert ref.equivalent_level(S, 120.0, 50.0) == 6.0  # clipped
     # Rare modes fall back to Standard's maps.
     assert ref.nps_percentile(Characteristic.DEGREE_360, E, 120.0, 4.0) == pytest.approx(50, abs=5)
     assert ref.style_percentile(E, 29.5) == 100.0
@@ -176,3 +177,21 @@ def test_lighting_metrics_reward_lights_on_onsets() -> None:
     late = lighting_metrics(off, feats, _analysis(), Beatmap("", BPM))
     assert late["onset_precision"] == 0.0 and late["on_beat"] == 0.0
     assert lighting_metrics(None, feats, _analysis(), Beatmap("", BPM)) is None
+
+
+def test_flat_ladder_stays_finite() -> None:
+    rows = [
+        {
+            "split": "train",
+            "characteristic": "OneSaber",
+            "difficulty": d.value,
+            "bpm": 230.0,
+            "nps": nps,
+            "tech_score": 0.0,
+        }  # fmt: skip
+        for d, nps in zip(Difficulty, (1.8, 1.79, 2.5, 3.4, 4.2), strict=True)
+        for _ in range(50)
+    ]
+    ref = HumanReference(rows)
+    level = ref.equivalent_level(Characteristic.ONE_SABER, 230.0, 1.34)
+    assert -2.0 <= level < 0.0
