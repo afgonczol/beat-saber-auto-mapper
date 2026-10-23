@@ -447,10 +447,144 @@ def train(
     typer.echo(" ".join(f"{k}={v:.4g}" for k, v in result.items()))
 
 
+def _default_eval_data() -> Path:
+    snapshot = Path("data/eval_v0_test")
+    return snapshot if (snapshot / "dataset.json").is_file() else Path("data/processed")
+
+
 @app.command()
-def evaluate(checkpoint: Path, split: str = "test") -> None:
-    """Score a checkpoint against held-out human maps (WS10)."""
-    raise NotImplementedError
+def evaluate(
+    model: Annotated[
+        list[Path] | None,
+        typer.Option("--model", "-m", help="Checkpoint to score; repeat for several."),
+    ] = None,
+    data: Annotated[
+        Path | None,
+        typer.Option(help="Built dataset; default data/eval_v0_test, else data/processed."),
+    ] = None,
+    split: str = typer.Option("test", help="Dataset split to score."),
+    out: Annotated[
+        Path | None, typer.Option(help="Output folder; default out/eval/<name>.")
+    ] = None,
+    name: str | None = typer.Option(None, help="Run name; default from the models and date."),
+    stub: bool = typer.Option(True, "--stub/--no-stub", help="Also score the stub generator."),
+    intensity: str | None = typer.Option(
+        None, help="Model intensities, e.g. 0.5,0.8; 'none' for the default only."
+    ),
+    limit: int | None = typer.Option(None, help="Only the first N songs (by key)."),
+    keys: str | None = typer.Option(None, help="Only these map keys, comma-separated."),
+    modes: str | None = typer.Option(None, help="Only these modes, e.g. Standard."),
+    difficulties: str | None = typer.Option(None, help="Only these difficulties."),
+    seed: int = typer.Option(0, help="Generation seed."),
+    device: str | None = typer.Option(None, help="cuda or cpu; default cuda if 4 GB are free."),
+    lighting: bool = typer.Option(True, "--lighting/--no-lighting", help="Score lightshows."),
+    style_songs: int = typer.Option(12, help="Songs for the style sweep (0 = off)."),
+    batch_difficulties: int = typer.Option(
+        2, help="Difficulties decoded per batch (0 = a whole mode, like generate)."
+    ),
+    resume: bool = typer.Option(False, help="Continue a run in the same output folder."),
+    rescore: Annotated[
+        Path | None,
+        typer.Option(help="Score the saved maps of this earlier run folder again (no decoding)."),
+    ] = None,
+    compare: Annotated[
+        tuple[Path, Path] | None,
+        typer.Option(help="Diff two summary.json files instead of running: A B."),
+    ] = None,
+    system_a: str | None = typer.Option(None, help="With --compare: system of A."),
+    system_b: str | None = typer.Option(None, help="With --compare: system of B."),
+    snapshot: Annotated[
+        Path | None,
+        typer.Option(help="Copy --split of --data to this folder (a frozen test set) and exit."),
+    ] = None,
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Score generated maps against held-out human maps (WS10). See docs/EVAL.md."""
+    from bsmapper.eval import EvalConfig, format_compare, load_summary, run_eval, snapshot_split
+    from bsmapper.eval.systems import checkpoint_label, intensity_supported
+    from bsmapper.schema import Characteristic, Difficulty
+
+    if compare:
+        try:
+            text = format_compare(
+                load_summary(compare[0]), load_summary(compare[1]), system_a, system_b
+            )
+        except (OSError, ValueError, KeyError) as e:
+            raise typer.BadParameter(str(e), param_hint="--compare") from e
+        typer.echo(text)
+        return
+    _setup_logging(verbose)
+    data = data or _default_eval_data()
+    if not (data / "dataset.json").is_file():
+        raise typer.BadParameter(f"{data} is not a built dataset", param_hint="--data")
+    if snapshot:
+        counts = snapshot_split(data, snapshot, split)
+        typer.echo(f"Copied the {split} split of {data} to {snapshot}: {counts}")
+        return
+    models = list(model or [])
+    for m in models:
+        if not m.is_file():
+            raise typer.BadParameter(f"{m} is not a file", param_hint="--model")
+    if intensity is None:
+        levels: list[float | None] = [0.5, 0.8] if intensity_supported() else [None]
+    elif intensity.strip().lower() == "none":
+        levels = [None]
+    else:
+        try:
+            levels = [float(v) for v in intensity.split(",") if v.strip()]
+        except ValueError as e:
+            raise typer.BadParameter(str(e), param_hint="--intensity") from e
+        if not intensity_supported():
+            typer.secho(
+                "Warning: this build's generator has no intensity option; scoring the default.",
+                fg=typer.colors.YELLOW,
+            )
+            levels = [None]
+    from datetime import date
+
+    base = "-".join(checkpoint_label(m).replace("/", "_") for m in models) or "stub"
+    if rescore:
+        base = f"{rescore.name}-rescored"
+    label = name or f"{base}-{date.today().isoformat()}"
+    cfg = EvalConfig(
+        data=data,
+        out=out or Path("out/eval") / label,
+        split=split,
+        stub=stub,
+        checkpoints=models,
+        intensities=levels,
+        keys=[k.strip() for k in keys.split(",")] if keys else None,
+        limit=limit,
+        modes=_parse_enum_list(modes, Characteristic, _MODE_ALIASES, "--modes") if modes else None,
+        difficulties=_parse_enum_list(difficulties, Difficulty, _DIFF_ALIASES, "--difficulties")
+        if difficulties
+        else None,
+        seed=seed,
+        device=device,
+        lighting=lighting,
+        style_songs=style_songs,
+        batch_difficulties=batch_difficulties,
+        resume=resume,
+        rescore=rescore,
+        label=label,
+    )
+    summary = run_eval(cfg, progress=typer.echo)
+    systems = summary["systems"]
+    typer.echo("")
+    typer.echo(f"{'system':<22} {'F1±2':>6} {'NPS/hum':>8} {'pct':>5} {'step':>6} {'err/100':>8}")
+    for s, block in systems.items():
+        g = block["groups"].get("all", {})
+
+        def v(key, fmt, g=g):
+            x = g.get(key)
+            return format(x, fmt) if isinstance(x, int | float) else "–"
+
+        typer.echo(
+            f"{s:<22} {v('onset_f1_2', '6.3f'):>6} {v('nps_ratio', '8.2f'):>8} "
+            f"{v('nps_percentile_median', '5.0f'):>5} {v('step_offset', '+6.2f'):>6} "
+            f"{v('errors_per_100', '8.2f'):>8}"
+        )
+    typer.echo(f"\nSummary: {cfg.out / 'summary.json'}\nReport:  {cfg.out / 'report.html'}")
 
 
 @app.command()
