@@ -60,8 +60,14 @@ class ProcessedDataset:
             start : start + row["n_windows"] * WINDOW_TICKS
         ]
 
-    def conditioning(self, row: dict[str, Any], nps: Any = _KEEP, style: Any = _KEEP):
-        """Ground-truth conditioning; pass ``nps=None`` / ``style=None`` to drop them."""
+    def conditioning(
+        self, row: dict[str, Any], nps: Any = _KEEP, style: Any = _KEEP, intensity: Any = _KEEP
+    ):
+        """Ground-truth conditioning; pass ``nps=None`` / ``style=None`` /
+        ``intensity=None`` to drop them (dataset v0 has no intensity)."""
+        level = row.get("intensity")
+        if level is not None and not np.isfinite(level):
+            level = None
         return Conditioning(
             Characteristic(row["characteristic"]),
             Difficulty(row["difficulty"]),
@@ -73,6 +79,7 @@ class ProcessedDataset:
             walls=row["flag_walls"],
             arcs=row["flag_arcs"],
             chains=row["flag_chains"],
+            intensity=level if intensity is _KEEP else intensity,
         )
 
     def note_windows(

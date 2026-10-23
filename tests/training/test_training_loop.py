@@ -70,7 +70,14 @@ def test_overfits_a_tiny_batch_on_cpu(synthetic_root):
     """The acceptance check for #8: the model memorizes a few windows exactly."""
     torch.manual_seed(0)
     store = DatasetStore(synthetic_root, ["train"])
-    data = DataConfig(style_dropout=0.0, nps_dropout=0.0, context_dropout=0.0)
+    # No reference blocks: the greedy check below decodes without a ref_fn.
+    data = DataConfig(
+        style_dropout=0.0,
+        nps_dropout=0.0,
+        context_dropout=0.0,
+        intensity_dropout=0.0,
+        ref_dropout=1.0,
+    )
     ds = NoteWindows(store, data, train=False)
     picks = [0, 1, 2, 4]  # windows 0..2 of one difficulty, window 1 of the next
     batch = collate([ds[j] for j in picks])

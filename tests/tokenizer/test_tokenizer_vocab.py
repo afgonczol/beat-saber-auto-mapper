@@ -95,7 +95,7 @@ def test_conditioning_from_request():
     cond = Conditioning.from_request(request)
     assert NOTE_VOCAB.names(cond.prefix_ids()) == [
         "CHAR_ONE_SABER", "DIFF_EXPERT_PLUS", "NPS_NONE", "STYLE_4",
-        "BOMBS_ON", "WALLS_ON", "ARCS_OFF", "CHAINS_ON",
+        "BOMBS_ON", "WALLS_ON", "ARCS_OFF", "CHAINS_ON", "INTENSITY_NONE",
     ]  # fmt: skip
 
 

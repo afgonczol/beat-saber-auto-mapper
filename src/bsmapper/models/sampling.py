@@ -20,6 +20,14 @@ in one batch over the same audio.
 
 Sampling runs on the CPU in NumPy with ``seed``, so a seed gives the same map on
 any device as long as the logits agree.
+
+The prompt layout follows the checkpoint's tokenizer version (from its vocabulary
+size): a note_v0 checkpoint (v1) gets the 8-token prefix and no reference blocks, so
+it decodes exactly as before. A v2 checkpoint (note_v1) also gets ``INTENSITY`` and,
+when ``ref_fn`` gives one, a reference block ``REF <events> REF_END`` built from the
+already generated windows (``WindowRefs``). ``SamplingOptions.repetition_guidance``
+scales the reference's effect by classifier-free guidance against the same prompt
+without the block.
 """
 
 from __future__ import annotations
@@ -34,17 +42,22 @@ import torch
 from bsmapper.models.mapper import MapperModel
 from bsmapper.tokenizer import (
     BOS,
+    DEFAULT_MAX_REF_TOKENS,
     EOS,
     LIGHT_GRAMMAR,
     NOTE_GRAMMAR,
     PAD,
+    REF,
+    REF_END,
     SEP,
     WINDOW_TICKS,
     Conditioning,
     Grammar,
     Parser,
     TokenWindow,
+    span_tokens,
     tail_context,
+    version_for_vocab,
 )
 
 
@@ -56,6 +69,10 @@ class SamplingOptions:
     # Classifier-free guidance on STYLE: logits = uncond + scale * (cond - uncond), where
     # uncond has STYLE_NONE. 1.0 = off. Only applies to conditionings with a style.
     style_guidance: float = 1.0
+    # Classifier-free guidance on the reference window (note_v1): logits = noref +
+    # scale * (ref - noref). 1.0 = the learned behaviour, 0 = ignore the reference,
+    # > 1 = repeat more. See ``repetition_guidance`` for the 0..1 knob.
+    repetition_guidance: float = 1.0
     context_events: int = 16
     max_body_tokens: int = 1024
 
@@ -72,6 +89,42 @@ class StepState:
 
 MaskFn = Callable[[StepState], np.ndarray | None]  # bool over the vocabulary, True = allowed
 WindowFn = Callable[[int, list[list[int]]], None]  # (window, bodies) after each window
+# (window, sequence, that sequence's generated bodies so far) -> reference events or None.
+RefFn = Callable[[int, int, list[list[int]]], list[int] | None]
+
+
+def repetition_guidance(repetition: float | None) -> float:
+    """``GenerationRequest.repetition`` (0..1) as a reference guidance scale.
+
+    None -> 1.0 (the learned, human-like amount). Otherwise ``2 * repetition``:
+    0 ignores the reference, 0.5 is the learned amount and 1.0 doubles its effect.
+    """
+    if repetition is None:
+        return 1.0
+    return 2.0 * min(max(repetition, 0.0), 1.0)
+
+
+class WindowRefs:
+    """A ``RefFn`` from reference start ticks, e.g. ``find_references(...).kept()``.
+
+    Window ``k``'s reference is the events of the already generated windows in
+    [starts[k], starts[k] + 16 beats), with TIME relative to the span's start.
+    """
+
+    def __init__(
+        self,
+        starts: Sequence[int | None],
+        max_tokens: int = DEFAULT_MAX_REF_TOKENS,
+        grammar: Grammar = NOTE_GRAMMAR,
+    ) -> None:
+        self.starts = [None if s is None or s < 0 else int(s) for s in starts]
+        self.max_tokens, self.grammar = max_tokens, grammar
+
+    def __call__(self, window: int, sequence: int, bodies: list[list[int]]) -> list[int] | None:
+        start = self.starts[window] if window < len(self.starts) else None
+        if start is None or start + WINDOW_TICKS > window * WINDOW_TICKS:
+            return None
+        return span_tokens(bodies, start, self.grammar, self.max_tokens)
 
 
 def pad_features(features: np.ndarray, n_windows: int | None = None) -> np.ndarray:
@@ -116,6 +169,8 @@ class _WindowDecoder:
 
     def __init__(self, decoder, grammar: Grammar, device: torch.device) -> None:
         self.decoder, self.grammar, self.device = decoder, grammar, device
+        self.vocab_size = len(grammar.vocab)
+        self.model_vocab = decoder.embed.num_embeddings
 
     @torch.no_grad()
     def run(
@@ -153,13 +208,15 @@ class _WindowDecoder:
         bodies: dict[int, list[int]] = {b: [] for b in rows}
         active = set(rows)
         while active:
-            lg = logits.float().cpu().numpy()
-            for c, u, scale in guidance or ():
-                lg[c] = lg[u] + scale * (lg[c] - lg[u])
+            lg = _guide(logits.float().cpu().numpy(), guidance or ())
+            if lg.shape[1] < self.vocab_size:  # an older checkpoint: newer tokens never sampled
+                pad = np.full((n, self.vocab_size - lg.shape[1]), -np.inf, dtype=lg.dtype)
+                lg = np.concatenate([lg, pad], axis=1)
             chosen = np.full(n, PAD, dtype=np.int64)
             for b in sorted(active):
                 parser, body = parsers[b], bodies[b]
                 allowed = parser.allowed_mask()
+                allowed[self.model_vocab :] = False
                 if len(body) >= limit and not parser.in_object:
                     allowed = np.zeros_like(allowed)
                     allowed[EOS] = True
@@ -184,15 +241,32 @@ class _WindowDecoder:
             if not active:
                 break
             step_valid = torch.zeros(n, 1, dtype=torch.bool)
+            cond_of = {u: c for c, u, _ in guidance or ()}
             for b in range(n):
-                cond = next((c for c, u, _ in guidance or () if u == b), b)
-                step_valid[b, 0] = cond in active
+                step_valid[b, 0] = cond_of.get(b, b) in active
             step_tokens = torch.as_tensor(chosen).view(n, 1)
             step_tokens[~step_valid] = PAD
             logits = self.decoder.step(
                 step_tokens.to(self.device), cache, step_valid.to(self.device)
             )[:, -1]
         return [bodies[b] for b in rows]
+
+
+def _guide(lg: np.ndarray, guidance: Sequence[tuple[int, int, float]]) -> np.ndarray:
+    """Apply classifier-free guidance; a row may be guided by several uncond rows."""
+    per_row: dict[int, list[tuple[int, float]]] = {}
+    for c, u, scale in guidance:
+        per_row.setdefault(c, []).append((u, scale))
+    if not per_row:
+        return lg
+    orig = lg.copy()
+    for c, terms in per_row.items():
+        if len(terms) == 1:  # the original formula, bit for bit
+            u, scale = terms[0]
+            lg[c] = orig[u] + scale * (orig[c] - orig[u])
+        else:
+            lg[c] = orig[c] + sum((scale - 1.0) * (orig[c] - orig[u]) for u, scale in terms)
+    return lg
 
 
 def _complete_prefix(body: list[int], grammar: Grammar) -> list[int]:
@@ -211,6 +285,11 @@ class NoteSampler:
         self.model = model.eval()
         self.device = torch.device(device) if device else next(model.parameters()).device
         self._decoder = _WindowDecoder(model.notes, NOTE_GRAMMAR, self.device)
+        self.version = version_for_vocab(model.cfg.note_vocab)  # tokenizer version
+
+    @property
+    def supports_references(self) -> bool:
+        return self.version >= 2
 
     @torch.no_grad()
     def generate(
@@ -221,38 +300,57 @@ class NoteSampler:
         mask_fn: MaskFn | None = None,
         on_window: WindowFn | None = None,
         n_windows: int | None = None,
+        ref_fn: RefFn | None = None,
     ) -> list[list[TokenWindow]]:
-        """One list of TokenWindows per conditioning (decode with ``MapTokenizer``)."""
+        """One list of TokenWindows per conditioning (decode with ``MapTokenizer``).
+
+        ``ref_fn`` gives window references (note_v1 checkpoints; ignored otherwise).
+        """
         opts = options or SamplingOptions()
         conds = [conditionings] if isinstance(conditionings, Conditioning) else list(conditionings)
         feats = pad_features(features, n_windows)
         n = feats.shape[0] // WINDOW_TICKS
         rng = np.random.default_rng(opts.seed)
-        prefixes = [c.prefix_ids() for c in conds]
+        v = self.version
+        prefixes = [c.prefix_ids(version=v) for c in conds]
         guided = [
-            (b, c.drop_style().prefix_ids())
+            (b, c.drop_style().prefix_ids(version=v))
             for b, c in enumerate(conds)
             if opts.style_guidance != 1.0 and c.style is not None
         ]
+        if not self.supports_references or opts.repetition_guidance == 0.0:
+            ref_fn = None
         out: list[list[TokenWindow]] = [[] for _ in conds]
+        history: list[list[list[int]]] = [[] for _ in conds]  # generated bodies per sequence
         prev: list[list[int]] = [[] for _ in conds]
         for k in range(n):
             memory = self._encode(feats, k)
             contexts = [
                 tail_context(p, NOTE_GRAMMAR, opts.context_events) if k else [] for p in prev
             ]
-            prompts = [[BOS, *pre, *ctx, SEP] for pre, ctx in zip(prefixes, contexts, strict=True)]
+            refs = [ref_fn(k, b, history[b]) if ref_fn else None for b in range(len(conds))]
+            blocks = [[] if r is None else [REF, *r, REF_END] for r in refs]
+            prompts = [
+                [BOS, *pre, *blk, *ctx, SEP]
+                for pre, blk, ctx in zip(prefixes, blocks, contexts, strict=True)
+            ]
             guidance = []
             for b, uncond in guided:
                 guidance.append((b, len(prompts), opts.style_guidance))
-                prompts.append([BOS, *uncond, *contexts[b], SEP])
+                prompts.append([BOS, *uncond, *blocks[b], *contexts[b], SEP])
+            if opts.repetition_guidance != 1.0:
+                for b, r in enumerate(refs):
+                    if r is not None:
+                        guidance.append((b, len(prompts), opts.repetition_guidance))
+                        prompts.append([BOS, *prefixes[b], *contexts[b], SEP])
             bodies = self._decoder.run(
                 memory.expand(len(prompts), -1, -1), None, prompts, k, opts, rng, mask_fn, guidance
             )
             if on_window is not None:
                 on_window(k, bodies)
             for b, body in enumerate(bodies):
-                out[b].append(TokenWindow(k, body, contexts[b], prefixes[b]))
+                out[b].append(TokenWindow(k, body, contexts[b], prefixes[b], refs[b]))
+                history[b].append(body)
             prev = bodies
         return out
 

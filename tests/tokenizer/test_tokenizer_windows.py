@@ -46,7 +46,7 @@ def test_window_layout():
     assert first[0] == BOS and first[-1] == EOS
     assert V.names(first[1 : 1 + PREFIX_LEN]) == [
         "CHAR_STANDARD", "DIFF_EXPERT", "NPS_4", "STYLE_4",
-        "BOMBS_OFF", "WALLS_OFF", "ARCS_OFF", "CHAINS_OFF",
+        "BOMBS_OFF", "WALLS_OFF", "ARCS_OFF", "CHAINS_OFF", "INTENSITY_NONE",
     ]  # fmt: skip
     assert first[1 + PREFIX_LEN] == SEP  # window 0 has no context
     assert V.names(windows[0].body) == ["TIME_24", "RED", "POS_1_0", "DIR_DOWN"]

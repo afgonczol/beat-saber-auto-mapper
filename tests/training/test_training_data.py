@@ -50,12 +50,13 @@ def test_examples_and_collate(synthetic_root):
     assert item["tokens"][0] == BOS
     assert item["tokens"][1 + 3] == NOTE_VOCAB.id("STYLE", None)  # dropped for CFG
     assert item["tokens"][item["loss_start"]] == SEP
-    batch = collate([ds[0], ds[1], ds[2]])
+    items = [ds[0], ds[1], ds[2]]  # drawn once: training examples are random
+    batch = collate(items)
     assert batch["features"].shape == (3, 384, 83)
     assert batch["inputs"].shape == batch["targets"].shape
     t = batch["targets"]
     for b in range(3):
-        start = [ds[0], ds[1], ds[2]][b]["loss_start"]
+        start = items[b]["loss_start"]
         assert (t[b, :start] == IGNORE).all()
         assert t[b, start] != IGNORE
     lights = LightWindows(store, DataConfig(lights_gold_only=True))
@@ -100,3 +101,34 @@ def test_config_rejects_unknown_keys(tmp_path):
         TrainConfig.load(p)
     with pytest.raises(ValueError):
         TrainConfig.load(REPO / "configs" / "debug.yaml", overrides=["nonsense"])
+
+
+def test_reference_and_intensity_examples(synthetic_root):
+    from bsmapper.tokenizer import REF, REF_END, span_tokens
+
+    store = DatasetStore(synthetic_root, ["train"])
+    assert store.version == 2
+    assert store.ref_start(0, 0, 0.8) is None and store.ref_start(0, 2, 0.8) == 0
+    assert store.ref_start(0, 2, 1.5) is None  # below the threshold
+    keep = DataConfig(ref_dropout=0.0, intensity_dropout=0.0, context_dropout=0.0)
+    ds = NoteWindows(store, keep)
+    ids = ds[2]["tokens"]  # window 2 repeats window 0
+    assert NOTE_VOCAB.group(ids[1 + 8]) == "INTENSITY" and ids[1 + 8] != NOTE_VOCAB.id(
+        "INTENSITY", None
+    )
+    ref = ids[ids.index(REF) + 1 : ids.index(REF_END)]
+    assert ref == span_tokens(store.notes[0], 0, NOTE_GRAMMAR) == store.notes[0].body(0)
+    assert ids[ds[2]["loss_start"]] == SEP
+    assert REF not in ds[1]["tokens"]  # window 1 has no reference
+    drop = NoteWindows(store, DataConfig(ref_dropout=1.0, intensity_dropout=1.0))
+    ids = drop[2]["tokens"]
+    assert REF not in ids and ids[1 + 8] == NOTE_VOCAB.id("INTENSITY", None)
+    # A tokenizer v1 model (note_v0) gets the v1 layout: 8 prefix tokens, no references.
+    v1 = NoteWindows(store, keep, version=1)
+    ids = v1[2]["tokens"]
+    assert ids[1 + 8] != REF and REF not in ids and max(ids) < 655
+
+
+def test_note_sequence_drops_reference_before_context():
+    ids, start = note_sequence([10] * 9, [20] * 4, [30] * 3, 20, ref=[40] * 10)
+    assert 40 not in ids and ids.count(20) == 4 and ids[start] == SEP

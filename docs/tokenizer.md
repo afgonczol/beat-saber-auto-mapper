@@ -27,7 +27,12 @@ assert tok.decode(windows, meta=dmap) == canonical_order(dmap)
   belongs to the window its start falls in. Its span (wall duration, arc or chain tail) may
   reach into later windows.
 
-## Note vocabulary (655 tokens)
+## Note vocabulary (663 tokens, tokenizer v2)
+
+The note vocabulary is versioned (`TOKENIZER_VERSION = 2`). New groups are only appended at
+the end, so the 655 ids of v1 (note_v0) are unchanged and a v1 checkpoint still loads.
+`version_for_vocab(model.cfg.note_vocab)` tells which layout a checkpoint expects, and
+`NOTE_VOCAB_SIZES` is `{1: 655, 2: 663}`. A test pins the v1 names by hash.
 
 | Group | Tokens | Meaning |
 |---|---|---|
@@ -49,18 +54,27 @@ assert tok.decode(windows, meta=dmap) == canonical_order(dmap)
 | `FRAC_0..60` | 61 | k/20 in 0..3: arc multipliers and chain squish |
 | `ANCHOR_0..2` | 3 | arc mid-anchor mode |
 | `SLICE_1..32` | 32 | chain slice count |
+| `INTENSITY_0..4`, `INTENSITY_NONE` | 6 | **v2**: intensity within the label, edges 0.2, 0.4, 0.6, 0.9 (bucket 2 = typical, 4 = hardest 10 %) |
+| `REF REF_END` | 2 | **v2**: delimit the reference block |
 
 ## Sequence layout
 
 ```
-BOS  CHAR DIFF NPS STYLE BOMBS WALLS ARCS CHAINS  <context>  SEP  <body>  EOS
+BOS  CHAR DIFF NPS STYLE BOMBS WALLS ARCS CHAINS INTENSITY  [REF <ref> REF_END]  <context>  SEP  <body>  EOS
 ```
 
-* **Prefix**: fixed length (`PREFIX_LEN = 8`). Build it with `Conditioning.from_map` for
-  training (the flags say which object types the map uses) or `Conditioning.from_request`
-  for generation. `drop_style()` and `drop_nps()` swap in the `_NONE` tokens. WS6 calls them
-  at random during training so the model also works with no preference and supports
-  classifier-free guidance.
+* **Prefix**: fixed length per version: `prefix_len(1) = 8` (no `INTENSITY`, note_v0) and
+  `prefix_len(2) = PREFIX_LEN = 9`. Build it with `Conditioning.from_map` for training (the
+  flags say which object types the map uses) or `Conditioning.from_request` for generation,
+  then `prefix_ids(version=...)`. `drop_style()`, `drop_nps()` and `drop_intensity()` swap
+  in the `_NONE` tokens. WS6 calls them at random during training so the model also works
+  with no preference and supports classifier-free guidance. `from_prefix` reads both layouts.
+* **Reference block** (v2, optional): the events of an earlier 16-beat span whose music
+  matches window *k* (`bsmapper.data.structure`), TIME relative to the span's start, at most
+  256 tokens (cut at an event boundary). Build it with `span_tokens(bodies, start_tick,
+  NOTE_GRAMMAR)` from human windows (training) or generated ones (sampling). A window with
+  no reference has no block; `REF REF_END` means the matching span was empty.
+  `TokenWindow.ref` holds it, and `input_ids()` / `from_ids()` handle it.
 * **Context**: the last `context_events` objects (default 16) of window *k-1*, with TIME
   relative to window *k-1*. Window 0 has an empty context. At generation time use
   `tail_context(previous_body, NOTE_GRAMMAR, n)`, which gives exactly what training saw.

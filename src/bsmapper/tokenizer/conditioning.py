@@ -1,10 +1,16 @@
-"""The conditioning prefix: ``CHAR DIFF NPS STYLE BOMBS WALLS ARCS CHAINS``.
+"""The conditioning prefix: ``CHAR DIFF NPS STYLE BOMBS WALLS ARCS CHAINS INTENSITY``.
 
 ``NPS`` buckets the difficulty's notes per second and ``STYLE`` buckets the
-0 (flowy) .. 1 (technical) slider into ``STYLE_0..4``. Both have a ``_NONE``
-token for "no preference": training drops them at random (``drop_style``) so
-the model works without them and supports classifier-free guidance. The four
-flags say whether the map uses (training) or may use (generation) each object type.
+0 (flowy) .. 1 (technical) slider into ``STYLE_0..4``. ``INTENSITY`` buckets the
+0..1 challenge within the difficulty label (0.5 = a typical human map, 1.0 = the
+hardest 10%) into ``INTENSITY_0..4``. Each has a ``_NONE`` token for "no
+preference": training drops them at random (``drop_style``) so the model works
+without them and supports classifier-free guidance. The four flags say whether the
+map uses (training) or may use (generation) each object type.
+
+The prefix layout follows the tokenizer version (``vocab.TOKENIZER_VERSION``):
+version 1 (note_v0) has no ``INTENSITY`` token, version 2 appends it. Pass the
+model's version to ``prefix_ids``.
 """
 
 from __future__ import annotations
@@ -15,10 +21,23 @@ from dataclasses import dataclass, replace
 
 from bsmapper.interfaces import GenerationRequest
 from bsmapper.schema import Beatmap, Characteristic, Difficulty, DifficultyMap
-from bsmapper.tokenizer.vocab import NOTE_VOCAB, NPS_EDGES, STYLE_BUCKETS, Vocab
+from bsmapper.tokenizer.vocab import (
+    INTENSITY_EDGES,
+    NOTE_VOCAB,
+    NPS_EDGES,
+    STYLE_BUCKETS,
+    TOKENIZER_VERSION,
+    Vocab,
+)
 
-PREFIX_GROUPS = ("CHAR", "DIFF", "NPS", "STYLE", "BOMBS", "WALLS", "ARCS", "CHAINS")
+PREFIX_GROUPS_V1 = ("CHAR", "DIFF", "NPS", "STYLE", "BOMBS", "WALLS", "ARCS", "CHAINS")
+PREFIX_GROUPS = (*PREFIX_GROUPS_V1, "INTENSITY")
+_PREFIX_GROUPS = {1: PREFIX_GROUPS_V1, 2: PREFIX_GROUPS}
 PREFIX_LEN = len(PREFIX_GROUPS)
+
+
+def prefix_len(version: int = TOKENIZER_VERSION) -> int:
+    return len(_PREFIX_GROUPS[version])
 
 
 def nps_bucket(nps: float) -> int:
@@ -34,6 +53,16 @@ def nps_bucket_value(bucket: int) -> float:
 
 def style_bucket(style: float) -> int:
     return min(int(max(0.0, style) * STYLE_BUCKETS), STYLE_BUCKETS - 1)
+
+
+def intensity_bucket(intensity: float) -> int:
+    return bisect.bisect_right(INTENSITY_EDGES, intensity)
+
+
+def intensity_bucket_value(bucket: int) -> float:
+    """A representative intensity for a bucket (its midpoint)."""
+    edges = (0.0, *INTENSITY_EDGES, 1.0)
+    return (edges[bucket] + edges[bucket + 1]) / 2
 
 
 def notes_per_second(
@@ -58,6 +87,7 @@ class Conditioning:
     walls: bool = True
     arcs: bool = True
     chains: bool = True
+    intensity: float | None = None  # 0..1 within the label; None = no preference
 
     @classmethod
     def from_request(cls, request: GenerationRequest) -> Conditioning:
@@ -70,11 +100,16 @@ class Conditioning:
             walls=request.allow_obstacles,
             arcs=request.allow_arcs,
             chains=request.allow_chains,
+            intensity=request.intensity,
         )
 
     @classmethod
     def from_map(
-        cls, dmap: DifficultyMap, nps: float | None = None, style: float | None = None
+        cls,
+        dmap: DifficultyMap,
+        nps: float | None = None,
+        style: float | None = None,
+        intensity: float | None = None,
     ) -> Conditioning:
         """Ground-truth conditioning for training; flags say which objects the map uses."""
         return cls(
@@ -86,6 +121,7 @@ class Conditioning:
             walls=bool(dmap.obstacles),
             arcs=bool(dmap.arcs),
             chains=bool(dmap.chains),
+            intensity=intensity,
         )
 
     def drop_style(self) -> Conditioning:
@@ -94,8 +130,12 @@ class Conditioning:
     def drop_nps(self) -> Conditioning:
         return replace(self, nps=None)
 
-    def prefix_ids(self, vocab: Vocab = NOTE_VOCAB) -> list[int]:
-        return [
+    def drop_intensity(self) -> Conditioning:
+        return replace(self, intensity=None)
+
+    def prefix_ids(self, vocab: Vocab = NOTE_VOCAB, version: int = TOKENIZER_VERSION) -> list[int]:
+        """The prefix in ``version``'s layout (1: no INTENSITY, as note_v0 was trained)."""
+        ids = [
             vocab.id("CHAR", self.characteristic),
             vocab.id("DIFF", self.difficulty),
             vocab.id("NPS", None if self.nps is None else nps_bucket(self.nps)),
@@ -105,13 +145,21 @@ class Conditioning:
             vocab.id("ARCS", self.arcs),
             vocab.id("CHAINS", self.chains),
         ]
+        if version >= 2:
+            level = None if self.intensity is None else intensity_bucket(self.intensity)
+            ids.append(vocab.id("INTENSITY", level))
+        return ids
 
     @classmethod
     def from_prefix(cls, ids: Sequence[int], vocab: Vocab = NOTE_VOCAB) -> Conditioning:
-        """Read a prefix back. NPS and style come back as bucket midpoints."""
-        if [vocab.group(i) for i in ids] != list(PREFIX_GROUPS):
+        """Read a prefix (any version) back. NPS, style and intensity come back as
+        bucket midpoints."""
+        groups = tuple(vocab.group(i) for i in ids)
+        if groups not in _PREFIX_GROUPS.values():
             raise ValueError(f"not a conditioning prefix: {vocab.names(ids)}")
-        char, diff, nps, style, bombs, walls, arcs, chains = (vocab.value(i) for i in ids)
+        values = [vocab.value(i) for i in ids]
+        char, diff, nps, style, bombs, walls, arcs, chains = values[:8]
+        level = values[8] if len(values) > 8 else None
         return cls(
             char,
             diff,
@@ -121,4 +169,5 @@ class Conditioning:
             walls=walls,
             arcs=arcs,
             chains=chains,
+            intensity=None if level is None else intensity_bucket_value(level),
         )

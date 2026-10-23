@@ -28,6 +28,7 @@ import torch.nn.functional as F
 
 from bsmapper.models.checkpoint import CHECKPOINT_FORMAT, model_state
 from bsmapper.models.mapper import MapperModel
+from bsmapper.tokenizer import version_for_vocab
 from bsmapper.training.config import TrainConfig
 from bsmapper.training.data import IGNORE, LightWindows, NoteWindows, collate, infinite_loader
 from bsmapper.training.store import DatasetStore
@@ -129,8 +130,13 @@ class Trainer:
         self.train_notes = run.train_notes
         if not (self.train_notes or self.train_lights):
             raise ValueError("nothing to train: train_notes and train_lights are both off")
-        self.notes = NoteWindows(self.train_store, data)
-        self.lights = LightWindows(self.train_store, data) if self.train_lights else None
+        self.version = version_for_vocab(cfg.model.note_vocab)  # prompt layout of this model
+        self.notes = NoteWindows(self.train_store, data, version=self.version)
+        self.lights = (
+            LightWindows(self.train_store, data, version=self.version)
+            if self.train_lights
+            else None
+        )
         if self.lights is not None and not len(self.lights):
             log.warning("no light windows to train on (gold-only and none gold?); lights off")
             self.lights, self.train_lights = None, False
@@ -266,11 +272,10 @@ class Trainer:
         out: dict[str, float] = {}
         tasks = []
         if self.train_notes:
-            tasks.append(
-                ("note", NoteWindows(self.val_store, cfg.data, train=False), self.note_loss)
-            )
+            notes = NoteWindows(self.val_store, cfg.data, train=False, version=self.version)
+            tasks.append(("note", notes, self.note_loss))
         if self.train_lights:
-            lights = LightWindows(self.val_store, cfg.data, train=False)
+            lights = LightWindows(self.val_store, cfg.data, train=False, version=self.version)
             if len(lights):
                 tasks.append(("light", lights, self.light_loss))
         for name, ds, fn in tasks:

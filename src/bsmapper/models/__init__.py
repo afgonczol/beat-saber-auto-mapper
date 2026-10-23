@@ -13,9 +13,12 @@ from bsmapper.models.sampling import (
     LightSampler,
     MaskFn,
     NoteSampler,
+    RefFn,
     SamplingOptions,
     StepState,
+    WindowRefs,
     pad_features,
+    repetition_guidance,
     sample_token,
 )
 
@@ -28,11 +31,14 @@ __all__ = [
     "ModelConfig",
     "NoteMemory",
     "NoteSampler",
+    "RefFn",
     "SamplingOptions",
     "StepState",
     "TokenDecoder",
+    "WindowRefs",
     "load_model",
     "model_state",
     "pad_features",
+    "repetition_guidance",
     "sample_token",
 ]

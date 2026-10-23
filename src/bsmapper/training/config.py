@@ -33,6 +33,11 @@ class DataConfig:
     style_dropout: float = 0.2
     nps_dropout: float = 0.1
     context_dropout: float = 0.05  # train some windows without the previous tail
+    # note_v1 (tokenizer v2): INTENSITY -> INTENSITY_NONE, and the reference window.
+    intensity_dropout: float = 0.15
+    ref_dropout: float = 0.3  # train windows that have a reference without it too
+    ref_threshold: float = 0.85  # keep a reference when its audio similarity is at least this
+    max_ref_tokens: int = 256  # cap of the reference block's events
     # Sampling weights. A difficulty window's weight is the product of these.
     characteristic_weights: dict[str, float] = field(
         default_factory=lambda: {

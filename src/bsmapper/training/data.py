@@ -1,9 +1,12 @@
 """Training examples: one 16-beat window of one difficulty (notes) or one map (lights).
 
-A note example is the decoder sequence ``BOS prefix context SEP body EOS`` with the
-loss on ``body EOS`` only, plus the window's audio features. The prefix is rebuilt
-from the manifest each time, with STYLE / NPS randomly replaced by their ``_NONE``
-tokens (classifier-free guidance), and the context is the previous window's tail.
+A note example is the decoder sequence ``BOS prefix [REF ref REF_END] context SEP
+body EOS`` with the loss on ``body EOS`` only, plus the window's audio features. The
+prefix is rebuilt from the manifest each time, with STYLE / NPS / INTENSITY randomly
+replaced by their ``_NONE`` tokens (classifier-free guidance), and the context is
+the previous window's tail. For a tokenizer v2 model (note_v1), a window whose
+reference span (``data.structure``) clears ``ref_threshold`` also gets the human
+notes of that span as a reference block, except ``ref_dropout`` of the time.
 
 A light example is ``BOS context SEP body EOS`` in the lighting vocabulary, the same
 audio, and the note track of one of the map's difficulties (``BOS prefix SEP body EOS``)
@@ -21,7 +24,19 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from bsmapper.schema import Difficulty
-from bsmapper.tokenizer import BOS, EOS, LIGHT_GRAMMAR, NOTE_GRAMMAR, PAD, SEP, tail_context
+from bsmapper.tokenizer import (
+    BOS,
+    EOS,
+    LIGHT_GRAMMAR,
+    NOTE_GRAMMAR,
+    PAD,
+    REF,
+    REF_END,
+    SEP,
+    TOKENIZER_VERSION,
+    span_tokens,
+    tail_context,
+)
 from bsmapper.training.config import DataConfig
 from bsmapper.training.store import DatasetStore
 
@@ -29,12 +44,21 @@ IGNORE = -100
 _DIFF_RANK = {d.value: i for i, d in enumerate(Difficulty)}
 
 
-def note_sequence(prefix: list[int], context: list[int], body: list[int], max_len: int):
+def note_sequence(
+    prefix: list[int],
+    context: list[int],
+    body: list[int],
+    max_len: int,
+    ref: list[int] | None = None,
+):
     """(ids, loss_start): the first target position predicts the first body token."""
-    ids = [BOS, *prefix, *context, SEP, *body, EOS]
-    body_offset = len(prefix) + len(context) + 2
+    block = [] if ref is None else [REF, *ref, REF_END]
+    ids = [BOS, *prefix, *block, *context, SEP, *body, EOS]
+    body_offset = len(prefix) + len(block) + len(context) + 2
     if len(ids) > max_len:
-        if body_offset + 1 > max_len:  # context too long: drop it rather than the body
+        if body_offset + 1 > max_len:  # too long: drop the reference, then the context
+            if ref is not None:
+                return note_sequence(prefix, context, body, max_len)
             return note_sequence(prefix, [], body, max_len)
         ids = ids[:max_len]
     return ids, body_offset - 1
@@ -60,8 +84,15 @@ def window_weights(
 
 
 class NoteWindows(Dataset):
-    def __init__(self, store: DatasetStore, cfg: DataConfig, train: bool = True) -> None:
+    def __init__(
+        self,
+        store: DatasetStore,
+        cfg: DataConfig,
+        train: bool = True,
+        version: int = TOKENIZER_VERSION,
+    ) -> None:
         self.store, self.cfg, self.train = store, cfg, train
+        self.version = version  # the model's tokenizer version: prefix layout, references
         self.index, self.weights = window_weights(store, cfg)
 
     def __len__(self) -> int:
@@ -75,18 +106,37 @@ class NoteWindows(Dataset):
             i,
             drop_nps=rng.random() < cfg.nps_dropout,
             drop_style=rng.random() < cfg.style_dropout,
+            drop_intensity=rng.random() < cfg.intensity_dropout,
         )
         track = store.notes[i]
         context = []
         if k and not rng.random() < cfg.context_dropout:
             context = tail_context(track.body(k - 1), NOTE_GRAMMAR, cfg.context_events)
-        ids, start = note_sequence(cond.prefix_ids(), context, track.body(k), cfg.max_note_tokens)
+        ref = None
+        if self.version >= 2:
+            s = store.ref_start(i, k, cfg.ref_threshold)
+            if s is not None and not rng.random() < cfg.ref_dropout:
+                ref = span_tokens(track, s, NOTE_GRAMMAR, cfg.max_ref_tokens)
+        ids, start = note_sequence(
+            cond.prefix_ids(version=self.version),
+            context,
+            track.body(k),
+            cfg.max_note_tokens,
+            ref,
+        )
         return {"features": store.features(i, k), "tokens": ids, "loss_start": start}
 
 
 class LightWindows(Dataset):
-    def __init__(self, store: DatasetStore, cfg: DataConfig, train: bool = True) -> None:
+    def __init__(
+        self,
+        store: DatasetStore,
+        cfg: DataConfig,
+        train: bool = True,
+        version: int = TOKENIZER_VERSION,
+    ) -> None:
         self.store, self.cfg, self.train = store, cfg, train
+        self.version = version
         rows_by_key: dict[str, list[int]] = defaultdict(list)
         for i, r in enumerate(store.rows):
             if r["key"] in store.lights and (r.get("gold") or not cfg.lights_gold_only):
@@ -122,7 +172,10 @@ class LightWindows(Dataset):
             context = tail_context(track.body(k - 1), LIGHT_GRAMMAR, cfg.context_events)
         ids, start = note_sequence([], context, track.body(k), cfg.max_light_tokens)
         notes, _ = note_sequence(
-            store.conditioning(i).prefix_ids(), [], store.notes[i].body(k), cfg.note_memory_tokens
+            store.conditioning(i).prefix_ids(version=self.version),
+            [],
+            store.notes[i].body(k),
+            cfg.note_memory_tokens,
         )
         return {
             "features": store.features(i, k),

@@ -159,3 +159,75 @@ the p99.9 is 499.
 - **Experiments after v0** (PLAN §5): frozen MERT/Whisper features instead of the conv
   stem, context length (8/16/32 events), audio context beyond the window, CFG on the
   difficulty token, and token time-resolution.
+
+## note_v1: intensity and structure memory
+
+Two findings from the note_v0 playtests drive v1 (PLAN, playtest log): every difficulty
+feels one step too easy, and human maps reuse patterns when the music repeats (often
+mirrored) while v0 does not. v1 adds two conditionings and trains on dataset v1 (about 4×
+v0). It needs tokenizer v2 (`docs/tokenizer.md`); note_v0 keeps working unchanged.
+
+### What changed
+
+- **`INTENSITY` prefix token** (`INTENSITY_0..4`, `_NONE`): the map's challenge within its
+  label, 0..1 (`docs/DATASET.md`, "Intensity"). 0.5 is a typical human map of that label and
+  tempo; 1.0 is about the hardest 10 %. It is dropped to `INTENSITY_NONE` 15 % of the time.
+  NPS is dropped more often than in v0 (25 %), so the model also learns to set density from
+  the intensity alone.
+- **Reference window** (structure memory): for each window, the most similar earlier,
+  bar-shifted 16-beat span of the same song (chroma, mel and onset features per beat,
+  `bsmapper.data.structure`). When its similarity is at least `ref_threshold` (0.85), the
+  human notes of that span go into the prompt as `REF <events> REF_END`, 70 % of the time
+  (`ref_dropout` 0.3), so the model learns both with and without one. The model learns from
+  human maps how much to copy, mirror or vary; there is no rule for it.
+- **Size**: d=512 like v0, but a 10-layer note decoder (v0: 8), 97M parameters. Sequences
+  are cropped at 1024 tokens (prefix 9 + reference ≤ 256 + tail + body); a too-long prompt
+  drops the reference first, then the tail.
+
+### Sampling with v1 (for WS7)
+
+```python
+from bsmapper.data.structure import beat_chroma, find_references, structure_features
+from bsmapper.models import NoteSampler, SamplingOptions, WindowRefs, repetition_guidance
+
+# per song: per-beat structure features on the map grid, then the reference per window
+chroma = beat_chroma(y, sr, beat_seconds, n_windows * 16)  # beat_seconds: map beat -> s
+refs = find_references(structure_features(features, chroma), n_windows)
+ref_fn = WindowRefs(refs.kept())  # threshold 0.85, as in training
+
+opts = SamplingOptions(..., repetition_guidance=repetition_guidance(request.repetition))
+conds = [Conditioning.from_request(r) for r in requests]  # carries request.intensity
+windows = NoteSampler(model).generate(features, conds, opts, ref_fn=ref_fn)
+```
+
+- `NoteSampler` picks the prompt layout from the checkpoint's vocabulary size. With a
+  note_v0 checkpoint it uses the 8-token prefix, ignores `intensity` and `ref_fn`, and
+  decodes token for token as before (`tests/models/test_models_v0_compat.py` checks a
+  recorded output of `checkpoints/note_v0/best.pt`).
+- `ref_fn(window, sequence, bodies)` returns the reference events for a window from that
+  sequence's already generated `bodies`, or None. `WindowRefs` does this from start ticks.
+- `repetition_guidance` is classifier-free guidance between the prompt with and without
+  the reference: `noref + g·(ref − noref)`. `repetition_guidance(None)` is 1.0, the learned
+  behaviour, with no extra batch rows. `repetition` 0..1 maps to g = 2·repetition: 0
+  ignores the reference, 0.5 is the learned amount and 1.0 doubles it. Each guided window
+  costs one extra batch row, as style guidance does; both can be on together.
+- `Conditioning.from_request` fills `intensity` from `GenerationRequest.intensity`.
+- `bsmapper.data.structure.repetition_profile(dmap, refs.kept())` measures how a map's
+  matched windows relate to their references (copy, mirror, same rhythm, different). WS10
+  can compare it with the human shares in `docs/DATASET.md`.
+
+### Run (dataset v1)
+
+- **Config**: `configs/note_v1.yaml`. 97M parameters, batch 32 note windows + 16 light
+  windows, lr 3e-4 with 2k warmup, 80k steps (about 3 passes over the v1 note windows).
+- **Benchmark** on real v1 batches (200 steps, while the dataset build was still using
+  the CPU and the GPU):
+
+  | model | params | steps/s | peak VRAM |
+  |---|---|---|---|
+  | d=640, 10 heads, 10 decoder layers, crop 1408 | 150M | — | OOM at 22 GB |
+  | d=640, 10 heads, 10 decoder layers, crop 1024 | 150M | 1.3–1.6 | 19.8 GB |
+  | **d=512, 8 heads, 10 decoder layers, crop 1024** | **97M** | **2.0–2.2** | **15.5 GB** |
+
+  d=640 would only reach about 50k steps overnight and leaves no VRAM for inference by
+  other sessions, so v1 uses d=512.
