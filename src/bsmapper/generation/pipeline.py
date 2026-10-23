@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bsmapper.generation.density import object_flags
-from bsmapper.generation.intensity import checker_for
+from bsmapper.generation.intensity import (
+    DEFAULT_INTENSITY,
+    SHIFT_ABOVE,
+    checker_for,
+    clamp_intensity,
+)
+from bsmapper.generation.intensity import plan as intensity_plan
 from bsmapper.generation.njs import JumpOverride
 from bsmapper.generation.postprocess import PostReport, postprocess
 from bsmapper.generation.stub import StubGenerator
@@ -53,6 +59,10 @@ ProgressFn = Callable[[str, float, str], None]
 MAX_NPS_RATIO = 0.95
 # ... and is regenerated at this share when it does not.
 RETRY_NPS_RATIO = 0.8
+# A shifted label below this share of its wanted NPS gets one more seed ...
+MIN_SHIFTED_REACH = 0.85
+# ... and below this share of its typical (intensity 0.5) NPS is redone unshifted.
+MIN_SHIFTED_SHARE = 0.8
 PREVIEW_S = 10.0
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
@@ -319,6 +329,7 @@ class Pipeline:
         harder: DifficultyResult | None = None
         for diff in diffs:
             res = first[diff]
+            res = self._not_easier(song, beatmap, characteristic, diff, opts, res, overrides)
             if harder is not None and harder.nps > 0 and res.nps >= MAX_NPS_RATIO * harder.nps:
                 target = RETRY_NPS_RATIO * harder.nps
                 log.info(
@@ -338,6 +349,43 @@ class Pipeline:
             results.append(res)
             harder = res
         return results[::-1]
+
+    def _not_easier(self, song, beatmap, characteristic, diff, opts, res, overrides):
+        """Keep shifted labels (intensity > 0.75) from landing at or below a typical map.
+
+        v0's output varies a lot from seed to seed. A shifted label under
+        ``MIN_SHIFTED_REACH`` of its wanted NPS is decoded once more with the next seed (the
+        closer one is kept). If it is still under ``MIN_SHIFTED_SHARE`` of the label's
+        typical (intensity 0.5) NPS, it is decoded unshifted at intensity 0.75.
+        """
+        level = clamp_intensity(opts.intensity)
+        if level <= SHIFT_ABOVE:
+            return res
+        wanted = intensity_plan(diff, characteristic, beatmap.bpm, level).wanted_nps
+        typical = intensity_plan(diff, characteristic, beatmap.bpm, DEFAULT_INTENSITY).wanted_nps
+        spent, attempts = res.seconds, res.attempts
+        if res.nps < MIN_SHIFTED_REACH * wanted:
+            msg = "%s %s at intensity %.2f: %.2f NPS (wanted %.2f); retrying with the next seed"
+            log.info(msg, characteristic, diff, level, res.nps, wanted)
+            seed = overrides.get("seed", opts.seed) + 1
+            again = self.generate_difficulty(
+                song, beatmap, characteristic, diff, opts, **{**overrides, "seed": seed}
+            )
+            spent, attempts = spent + again.seconds, attempts + 1
+            if abs(again.nps - wanted) < abs(res.nps - wanted):
+                res = again
+        if res.nps < MIN_SHIFTED_SHARE * typical:
+            msg = "%s %s at intensity %.2f: %.2f NPS (typical %.2f); retrying unshifted"
+            log.info(msg, characteristic, diff, level, res.nps, typical)
+            unshifted = dataclasses.replace(opts, intensity=SHIFT_ABOVE)
+            retry = self.generate_difficulty(
+                song, beatmap, characteristic, diff, unshifted, **overrides
+            )
+            spent, attempts = spent + retry.seconds, attempts + 1
+            if retry.nps > res.nps:
+                res = retry
+        res.attempts, res.seconds = attempts, spent
+        return res
 
     def light(self, song: Song, beatmap: Beatmap, opts: GenerateOptions) -> tuple[str, str | None]:
         """Light ``beatmap``. Returns the source used ("model"/"rules") and a fallback note."""

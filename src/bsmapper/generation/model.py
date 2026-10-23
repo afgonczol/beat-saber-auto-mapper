@@ -45,7 +45,7 @@ from bsmapper.generation.density import (
     conditioning_nps,
     loud_gaps,
 )
-from bsmapper.generation.intensity import checker_for
+from bsmapper.generation.intensity import SHIFT_ABOVE, checker_for, conditioning_cap
 from bsmapper.generation.intensity import plan as intensity_plan
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.generation.timing import tempo_beatmap
@@ -398,10 +398,15 @@ class ModelGenerator:
         for r in requests:
             as_ = intensity_plan(r.difficulty, r.characteristic, beatmap.bpm, r.intensity)
             cond_diff = as_.condition_as
-            base = conditioning_nps(cond_diff, r.target_nps or 0.0)
+            # Above 0.75 the targets reach the top NPS buckets; keep the boosted copy within
+            # what human maps of that difficulty do (intensity 0.5 is left as in #31).
+            cap = math.inf
+            if as_.intensity > SHIFT_ABOVE:
+                cap = conditioning_cap(cond_diff, r.characteristic, beatmap.bpm)
+            base = min(conditioning_nps(cond_diff, r.target_nps or 0.0), cap)
             factors = (1.0, *s.density_boosts) if r.target_nps else (1.0,)
             groups.append(list(range(len(rows), len(rows) + len(factors))))
-            rows += [replace(r, target_nps=round(base * f, 2)) for f in factors]
+            rows += [replace(r, target_nps=round(min(base * f, cap), 2)) for f in factors]
             conds_as += [cond_diff] * len(factors)
         metas = []
         for r in rows:  # NJS / reaction time follow the label

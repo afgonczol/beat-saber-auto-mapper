@@ -83,3 +83,43 @@ def test_configured_intensity(tmp_path) -> None:
     cfg.write_text("[generate]\nintensity = 3\n", encoding="utf-8")
     with pytest.raises(ValueError):
         configured_intensity(cfg)
+
+
+def test_conditioning_cap_is_the_human_p95() -> None:
+    from bsmapper.generation.density import NPS_GAIN
+    from bsmapper.generation.intensity import conditioning_cap, nps_ratio
+
+    cap = conditioning_cap(Difficulty.EXPERT_PLUS, S, 104.0)
+    p95 = target_nps(Difficulty.EXPERT_PLUS, S, 104.0) * nps_ratio(Difficulty.EXPERT_PLUS, 0.95)
+    assert cap == pytest.approx(p95 * NPS_GAIN[Difficulty.EXPERT_PLUS], abs=0.01)
+
+
+class _ShyGenerator:
+    """Dense maps unless shifted (intensity > 0.75), then nearly empty."""
+
+    name = "fake"
+
+    def generate(self, analysis, request):
+        from bsmapper.schema import Color, CutDirection, Note
+
+        step = 8.0 if (request.intensity or 0.5) > 0.75 else 0.5
+        dmap = DifficultyMap(request.characteristic, request.difficulty)
+        beat, i = 4.0, 0
+        while beat < 100:
+            color = Color(i % 2)
+            dmap.notes.append(Note(beat, 1 + i % 2, 0, color, CutDirection.ANY))
+            beat, i = beat + step, i + 1
+        return dmap
+
+
+def test_shifted_label_that_comes_out_easier_is_redone_unshifted(tmp_path) -> None:
+    from gen_synthetic import FakeAnalyzer
+
+    from bsmapper.generation import GenerateOptions, Pipeline
+
+    pipeline = Pipeline(_ShyGenerator(), analyzer=FakeAnalyzer(duration=60.0))
+    song = pipeline.analyze(tmp_path / "A - B.mp3")
+    opts = GenerateOptions(difficulties=[Difficulty.EXPERT], intensity=0.9, lighting_source="rules")
+    _, (res,) = pipeline.build(song, opts)
+    # next seed (still shifted, still sparse), then unshifted: that one is kept
+    assert res.attempts == 3 and res.nps > 1.5

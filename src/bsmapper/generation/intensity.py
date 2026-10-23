@@ -116,6 +116,17 @@ def plan(
     return IntensityPlan(label, level, q, wanted, harder(label) if shift else label)
 
 
+def conditioning_cap(condition_as: Difficulty, characteristic: Characteristic, bpm: float) -> float:
+    """Highest NPS to condition the model on above intensity 0.75: the human p95 for
+    ``condition_as`` at ``bpm``, times its conditioning gain. Above that v0 saw too few maps
+    and its output gets erratic (at intensity 1.0 the boosted copy sometimes came out
+    *sparser*)."""
+    from bsmapper.generation.density import NPS_GAIN
+
+    p95 = target_nps(condition_as, characteristic, bpm) * nps_ratio(condition_as, 0.95)
+    return round(p95 * NPS_GAIN[condition_as], 2)
+
+
 def relaxed_rules(config: RulesConfig, label: Difficulty, intensity: float | None) -> RulesConfig:
     """``config`` (the label's thresholds) with the ceilings raised for a shifted label."""
     level = clamp_intensity(intensity)
