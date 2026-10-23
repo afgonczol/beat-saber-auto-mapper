@@ -27,7 +27,13 @@ from typing import Any
 import numpy as np
 
 from bsmapper.schema import Characteristic, Difficulty
-from bsmapper.tokenizer import LIGHT_VOCAB, NOTE_VOCAB, WINDOW_TICKS, Conditioning
+from bsmapper.tokenizer import (
+    LIGHT_VOCAB,
+    NOTE_VOCAB_SIZES,
+    WINDOW_TICKS,
+    Conditioning,
+    version_for_vocab,
+)
 
 
 def _pq():
@@ -57,6 +63,12 @@ class TokenTrack:
     def body_len(self, k: int) -> int:
         return int(self.offsets[k + 1] - self.offsets[k])
 
+    def __len__(self) -> int:
+        return self.n_windows
+
+    def __getitem__(self, k: int) -> list[int]:
+        return self.body(k)
+
 
 def _arrays(column, dtype) -> list[np.ndarray]:
     return [np.asarray(x, dtype=dtype) for x in column.to_numpy(zero_copy_only=False)]
@@ -73,11 +85,13 @@ class DatasetStore:
         pq = _pq()
         self.root = Path(root)
         self.meta: dict[str, Any] = json.loads((self.root / "dataset.json").read_text())
-        for key, vocab in (("note_vocab_size", NOTE_VOCAB), ("light_vocab_size", LIGHT_VOCAB)):
-            if key in self.meta and self.meta[key] != len(vocab):
-                raise ValueError(
-                    f"dataset {key} {self.meta[key]} != tokenizer {len(vocab)}; rebuild it"
-                )
+        # Window bodies only use tokenizer v1 ids, so any known note vocabulary works.
+        self.version = version_for_vocab(self.meta.get("note_vocab_size", NOTE_VOCAB_SIZES[2]))
+        if self.meta.get("light_vocab_size", len(LIGHT_VOCAB)) != len(LIGHT_VOCAB):
+            raise ValueError(
+                f"dataset light_vocab_size {self.meta['light_vocab_size']} != tokenizer "
+                f"{len(LIGHT_VOCAB)}; rebuild it"
+            )
         manifest = pq.read_table(self.root / "manifest.parquet").to_pylist()
         self.rows = [r for r in manifest if r["split"] in splits]
         self.notes: list[TokenTrack] = []
@@ -131,7 +145,9 @@ class DatasetStore:
         start = r["feature_row"] + k * WINDOW_TICKS
         return np.asarray(self._features[shard][start : start + WINDOW_TICKS])
 
-    def conditioning(self, i: int, drop_nps: bool = False, drop_style: bool = False):
+    def conditioning(
+        self, i: int, drop_nps: bool = False, drop_style: bool = False, drop_intensity: bool = False
+    ):
         r = self.rows[i]
         return Conditioning(
             Characteristic(r["characteristic"]),
@@ -142,7 +158,17 @@ class DatasetStore:
             walls=bool(r["flag_walls"]),
             arcs=bool(r["flag_arcs"]),
             chains=bool(r["flag_chains"]),
+            intensity=None if drop_intensity else _finite(r.get("intensity")),
         )
+
+    def ref_start(self, i: int, k: int, threshold: float) -> int | None:
+        """Window ``k``'s reference start tick when its score clears ``threshold``."""
+        r = self.rows[i]
+        starts, scores = r.get("ref_start"), r.get("ref_score")
+        if not starts or k >= len(starts) or starts[k] is None or starts[k] < 0:
+            return None
+        score = scores[k]
+        return int(starts[k]) if score is not None and score >= threshold else None
 
     def feature_stats(
         self, max_windows: int = 2000, seed: int = 0

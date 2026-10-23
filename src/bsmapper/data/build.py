@@ -6,7 +6,8 @@ Three stages, all resumable:
    audio and compute frame features (WS2), resample them onto the map's own grid
    (``mapgrid``), snap every difficulty (WS4 ``snap_map``), compute stats, rule
    issues (WS5) and tech features, tokenize notes and the lightshow (WS4) and
-   fingerprint the audio. Writes ``work/maps/<key>.npz`` + ``<key>.json``.
+   fingerprint the audio and compute its per-beat structure features
+   (``structure``). Writes ``work/maps/<key>.npz`` + ``<key>.json``.
 2. **Track** (one process, uses the GPU): run the WS2 analyzer to get the
    *detected* beat grid, written to ``work/track/<key>.json``. It only feeds the
    grid-drift stat, so it runs alongside stage 1 and can be skipped.
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-BUILDER_VERSION = 2  # bump when stage 1 output changes; such maps are processed again
+BUILDER_VERSION = 3  # bump when stage 1 output changes; such maps are processed again
 TRACK_VERSION = 1  # the same for stage 2 (detected grids)
 PLAYABLE = (
     Characteristic.STANDARD,
@@ -236,6 +237,12 @@ def _process_inner(key: str, zip_path: Path, out: Path) -> dict[str, Any]:
         shift_map,
     )
     from bsmapper.data.songs import fingerprint
+    from bsmapper.data.structure import (
+        CHROMA_HOP,
+        frame_chroma,
+        per_beat_mean,
+        structure_features,
+    )
     from bsmapper.formats import MapFormatError, read_map_report
     from bsmapper.rules import RuleChecker
     from bsmapper.tokenizer import (
@@ -290,6 +297,7 @@ def _process_inner(key: str, zip_path: Path, out: Path) -> dict[str, Any]:
     if duration < 5.0:
         raise _Reject("audio_too_short", duration_s=duration, **meta)
     frame = compute_frame_features(y, cfg)
+    chroma_frames = frame_chroma(y, cfg.sr)
     del y
 
     checker = RuleChecker()
@@ -337,6 +345,10 @@ def _process_inner(key: str, zip_path: Path, out: Path) -> dict[str, Any]:
     for s, m in zip(stats, snapped, strict=True):
         s.update(onset_alignment(onset, [n.beat for n in m.notes]))
     arrays["fingerprint"] = fingerprint(frame["mel"])
+    chroma = per_beat_mean(
+        chroma_frames, cfg.sr / CHROMA_HOP, timing.seconds, n_windows * WINDOW_BEATS
+    )
+    arrays["structure"] = structure_features(arrays["features"], chroma).astype(np.float16)
     tmp = out / f"{key}.tmp.npz"
     np.savez(tmp, **arrays)
     os.replace(tmp, out / f"{key}.npz")

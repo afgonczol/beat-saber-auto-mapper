@@ -5,6 +5,17 @@ A vocabulary is an ordered list of *groups*. Each group holds tokens of one kind
 (``TIME`` -> tick, ``POS`` -> (x, y), ``NOTE`` -> Color ...). Ids are stable as
 long as the group tables below do not change, so treat edits here like a
 checkpoint-format change.
+
+The note vocabulary is versioned (``TOKENIZER_VERSION``). New groups are only ever
+appended at the end, so a version's ids are a prefix of the next version's and a
+checkpoint trained on an older version keeps working (``version_for_vocab``):
+
+====  =====  ==========================================================
+v     size   added
+====  =====  ==========================================================
+1     655    everything up to ``SLICE`` (note_v0)
+2     663    ``INTENSITY_0..4``, ``INTENSITY_NONE``, ``REF``, ``REF_END`` (note_v1)
+====  =====  ==========================================================
 """
 
 from __future__ import annotations
@@ -34,6 +45,10 @@ PAD, BOS, EOS, SEP = 0, 1, 2, 3  # the same ids in every vocabulary
 # NPS bucket edges (notes per second). Bucket k covers [EDGES[k-1], EDGES[k]).
 NPS_EDGES = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 14.0)
 STYLE_BUCKETS = 5
+# Intensity bucket edges (0..1 within the difficulty label): 0.5 is a typical human map,
+# INTENSITY_4 the hardest 10%.
+INTENSITY_EDGES = (0.2, 0.4, 0.6, 0.9)
+TOKENIZER_VERSION = 2
 DUR_MAX_BEATS = 16  # whole-beat duration tokens DUR_1..DUR_16, repeated for longer spans
 
 # Event types the lighting vocabulary covers: lights, rings, lasers, utility, special.
@@ -201,6 +216,10 @@ def build_note_vocab() -> Vocab:
             ("FRAC", range(FRAC_MAX + 1), _default_name),  # value k / 20
             ("ANCHOR", range(3), _default_name),
             ("SLICE", range(1, MAX_SLICES + 1), _default_name),
+            # --- v2 (append only) ---
+            ("INTENSITY", [*range(len(INTENSITY_EDGES) + 1), None], _nullable_name),
+            ("REF", [None], _default_name),  # reference window: REF <events> REF_END
+            ("REF_END", [None], _default_name),
         ]
     )
 
@@ -224,6 +243,18 @@ def build_light_vocab() -> Vocab:
 
 
 NOTE_VOCAB = build_note_vocab()
+NOTE_VOCAB_SIZES = {1: NOTE_VOCAB.id("INTENSITY", 0), 2: len(NOTE_VOCAB)}
+
+
+def version_for_vocab(size: int) -> int:
+    """Tokenizer version of a note model or dataset from its vocabulary size."""
+    for version, n in NOTE_VOCAB_SIZES.items():
+        if n == size:
+            return version
+    raise ValueError(f"no tokenizer version has a note vocabulary of {size} tokens")
+
+
 LIGHT_VOCAB = build_light_vocab()
 assert NOTE_VOCAB.id("PAD") == PAD and NOTE_VOCAB.id("SEP") == SEP
+assert NOTE_VOCAB_SIZES[1] == 655, "v1 ids changed: note_v0 checkpoints would break"
 assert LIGHT_VOCAB.id("BOS") == BOS and LIGHT_VOCAB.id("EOS") == EOS

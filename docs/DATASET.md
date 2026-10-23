@@ -348,8 +348,9 @@ bsmapper data scrape --out data/raw --characteristics OneSaber --min-score 0.7 -
 
 Compared with v0, Standard grew about 4.2× (5589 → 23567 difficulties). The rare modes did
 not grow, because their pools were already exhausted. Easy and Normal are still the
-thinnest Standard difficulties (1854 and 2418). `data/processed` has **not** been rebuilt
-yet; that is a separate `bsmapper data build` step.
+thinnest Standard difficulties (1854 and 2418). The processed dataset v1 is in
+`data/processed_v1` (see [Build stats](#dataset-v1-2026-10-22-10001-maps-1)); `data/processed`
+stays dataset v0 for note_v0.
 
 ## Processed dataset: `bsmapper data build` (WS3b)
 
@@ -396,6 +397,11 @@ Stage 1 runs per map in `--workers` CPU processes (default: cores − 2):
    `LightingTokenizer`. All difficulties of a map get the same number of windows: the
    audio's length in 16-beat windows, or more if objects run past the end of the song.
 8. **Fingerprint** the audio for the song-level split (below).
+9. **Structure features** (builder v3, dataset v1): per map beat, 12 chroma bins
+   (`librosa.feature.chroma_stft`, averaged over the beat), the 80 mel bins averaged into
+   20 bands, the beat's onset strength in 8 slots of 3 ticks, and RMS
+   (`bsmapper.data.structure`). Saved as `structure` in the work file; the pack stage
+   turns them into reference windows (see [Structure](#structure-reference-windows-dataset-v1)).
 
 Stage 2 runs at the same time, in one process on the GPU. It runs the full WS2
 `Analyzer` (beat_this) on each song and saves the *detected* grid for the grid-drift
@@ -441,6 +447,41 @@ mostly learns which difficulty a map is. `style` is the score's percentile rank 
 its difficulty, so each of `STYLE_0..4` holds about a fifth of every difficulty. Difficulties
 with fewer than 16 notes have no features. They get `style = NaN` and
 `style_bucket = -1`, so use `STYLE_NONE` for them.
+
+### Intensity label (dataset v1)
+
+`intensity` (0..1) says how challenging a difficulty is *for its label*, for the note_v1
+`INTENSITY` token (`bsmapper.data.intensity`). It is a mid-rank percentile within a group
+of comparable difficulties: the same characteristic and difficulty, and the same tempo
+bucket (the BPM folded into 90–180 by octaves, since mappers often double it, then cut at
+110 / 130 / 150). Groups with fewer than 40 difficulties fall back to (characteristic,
+difficulty), then (all characteristics, difficulty, tempo), then (difficulty). The value
+ranked is BeatLeader's `passRating` (how hard the map is to pass; its AI rates almost every
+map), else `stars`, else the map's NPS. All three are ranks inside the same group, so they
+share one uniform scale: 0.5 is a typical map of that label and tempo, 0.9+ the hardest
+10 % (`INTENSITY_4`). The calibration table in [Build stats](#build-stats) compares the
+BeatLeader rank with the NPS rank on maps that have both, which is what the NPS fallback
+relies on.
+
+### Structure: reference windows (dataset v1)
+
+Human mappers reuse patterns when the music repeats (a second chorus, a repeated drop),
+often mirrored. For each 16-beat window, the pack stage finds the most similar *earlier*
+16-beat span of the same song (`find_references`): candidates start a whole number of
+bars (4 beats) before the window and end at or before its start, so they keep the
+window's position in the bar and only use music that comes before it. The score is the
+mean, over the 16 beats, of the cosine similarity of the per-beat structure features
+(chroma, z-scored mel bands and onset pattern, equally weighted); silent beats score 0.
+The best start and its score are stored per window (`ref_start` in ticks, −1 for none, and
+`ref_score`); training keeps a reference when the score is at least 0.85
+(`DataConfig.ref_threshold`). The threshold comes from the human repetition stats below:
+it is where most matched windows share at least their rhythm with the reference.
+
+`repetition_kind` classifies a window's notes against its reference: **copy** (at least
+80 % of the notes agree in time, colour, position and direction, by F1), **mirror** (the
+same after swapping colours, flipping x and mirroring directions), **rhythm** (80 % of the
+note times agree) or **different**. `repetition_profile(dmap, refs)` gives the shares for
+a whole map, human or generated.
 
 ### Song-level split
 
@@ -511,10 +552,10 @@ is a thin wrapper over it.
 
 | Key | Meaning |
 |---|---|
-| `dataset_version`, `builder_version`, `created` | 0, 2, UTC build time of the pack |
+| `dataset_version`, `builder_version`, `created` | 0, 2 for v0 and 1, 3 for v1; UTC build time of the pack |
 | `ticks_per_beat`, `window_ticks` | 24 and 384 (16 beats) |
 | `feature_dim`, `feature_columns`, `feature_dtype` | 83, `mel_0 … mel_79, onset_strength, spectral_flux, rms`, `float16` |
-| `note_vocab_size`, `light_vocab_size` | 655 and 500 (`tokenizer.NOTE_VOCAB` / `LIGHT_VOCAB`; PAD 0, BOS 1, EOS 2, SEP 3) |
+| `note_vocab_size`, `light_vocab_size` | 655 (v0) or 663 (v1, tokenizer v2) and 500 (`tokenizer.NOTE_VOCAB` / `LIGHT_VOCAB`; PAD 0, BOS 1, EOS 2, SEP 3). The window bodies only use v1 ids, so either loads |
 | `shards` | shard count per split, e.g. `{"train": 35, "val": 3, "test": 2}` |
 | `pack_config` | the filters used (`PackConfig`) |
 | `tech_calibration` | per difficulty: features, mean, std, weights, intercept, n, CV r and Spearman |
@@ -555,6 +596,7 @@ lights.
 | identity | `key`, `split` (`train`/`val`/`test`), `song_group`, `characteristic`, `difficulty`, `label` |
 | pointers | `n_windows`, `feature_shard`, `feature_row`, `token_shard`, `token_row`, `light_shard`, `light_row` |
 | conditioning | `nps`, `nps_bucket`, `style` (0..1, NaN = none), `style_bucket` (0..4, −1 = none), `flag_bombs`, `flag_walls`, `flag_arcs`, `flag_chains` |
+| v1 labels | `intensity` (0..1), `intensity_bucket` (0..4), `bpm_bucket` (0..3), `ref_start` (list, one start tick per window, −1 = none), `ref_score` (list, NaN = none) |
 | style label | `tech_score` (techRating z units within the difficulty), `tech_<feature>` × 7, `bl_tech_rating`, `bl_stars`, `bl_pass_rating`, `bl_acc_rating`, `bl_status` |
 | weighting | `gold`, `ranked`, `curated`, `uploaded` |
 | content | `notes`, `bombs`, `obstacles`, `arcs`, `chains`, `rotations`, `tokens` (body token count), `max_window_tokens`, `njs`, `njs_offset` |
@@ -573,6 +615,105 @@ lights.
 with `kept`, `reason` and the same stats columns as the manifest.
 
 ### Build stats
+
+#### Dataset v1 (2026-10-22, 10001 maps)
+
+Built for note_v1 into a **new directory**, `data/processed_v1`; `data/processed` (v0) is
+unchanged. Builder version 3 (stage 1 adds the structure features), dataset version 1
+(pack adds `intensity`, `ref_start` / `ref_score` and the stats below), tokenizer v2
+(`note_vocab_size` 663). The stages ran as separate detached processes from a code
+snapshot in `data/processed_v1/code/` (`run_build.py process | track | pack`), so the
+build survives the session that started it and resumes like any build.
+
+- **Time:** stage 1 took 51 min for 10,001 maps (13 CPU workers, 3.3 maps/s). The pack
+  took 17 min (song grouping and writing the 17 GB of feature shards dominate; finding
+  the references and the repetition stats take about 2 min).
+- **Beat tracking (grid drift) did not run for the new maps.** The 2,712 v0 track files
+  were copied over. The tracker failed on every other map because `beat_this` is not
+  installed in the project's `.venv` (`ModuleNotFoundError`), so the drift stat below
+  covers only the 2,448 kept v0 maps. Training does not use it. The error files were
+  deleted, so `run_build.py track` retries those maps once `beat_this` is installed.
+- **Disk:** features 17 GB, note tokens 76 MB, light tokens 96 MB, manifest 7.7 MB, and
+  `work/` 19 GB (deletable once the build is final).
+
+**Maps:** 9061 of 10001 kept. Rejected: 774 because no difficulty passed the filters, 159
+because they need Noodle or Mapping Extensions, 7 without a playable characteristic.
+
+**Difficulties:** 22,004 kept of the 25,007 read. Rejected: 2049 `off_grid` (1858
+Standard), 670 `characteristic` (Lightshow, NoArrows), 126 `rule_errors`, 114
+`too_few_notes`, 44 `past_audio_end`.
+
+**Splits** (by song; 8333 song groups, 581 with more than one map):
+
+| Split | Maps | Songs | Difficulties | Map windows | Note tokens | Maps with lights | Light tokens |
+|---|---|---|---|---|---|---|---|
+| train | 8123 | 7483 | 19,820 | 242,164 | 73,953,913 | 8022 | 117,171,827 |
+| val | 448 | 413 | 1028 | 13,664 | 3,875,921 | 440 | 6,176,050 |
+| test | 490 | 437 | 1156 | 14,031 | 4,237,685 | 481 | 6,588,364 |
+
+Compared with v0, train has 3.2× the note tokens (74.0M vs 23.4M) and 3.0× the
+difficulty windows (588,379 vs 197,786).
+
+**Kept Standard difficulties** (train / val / test): Easy 1585 (1436/73/76), Normal 2184
+(1975/100/109), Hard 4249 (3827/196/226), Expert 5864 (5282/263/319), ExpertPlus 7115
+(6377/351/387). The rare modes barely grew, because their pools were already exhausted in
+v0: OneSaber 604, 360Degree 297, 90Degree 106 difficulties.
+
+**Intensity calibration** (kept difficulties, all characteristics; 52 ranking groups):
+
+| Difficulty | n | ranked by passRating | by stars | by NPS | Spearman(BL rank, NPS rank) | same bucket | within one bucket |
+|---|---|---|---|---|---|---|---|
+| Easy | 1638 | 1622 | 14 | 2 | 0.86 | 57 % | 95 % |
+| Normal | 2268 | 2254 | 13 | 1 | 0.86 | 58 % | 94 % |
+| Hard | 4391 | 4381 | 7 | 3 | 0.82 | 54 % | 92 % |
+| Expert | 6162 | 6153 | 6 | 3 | 0.77 | 50 % | 90 % |
+| ExpertPlus | 7545 | 7531 | 12 | 2 | 0.76 | 49 % | 88 % |
+
+BeatLeader rates almost every difficulty, so the NPS fallback is used for only 11.
+Within a difficulty and tempo, BeatLeader's passRating rank and the NPS rank agree well
+(Spearman 0.76–0.86) and land within one bucket of each other about 90 % of the time. The
+two are close enough to share the scale, and passRating also reflects what NPS misses
+(swing angles, speed, patterns). Buckets: `INTENSITY_0..4` hold 4446 / 4389 / 4391 /
+6580 / 2198 difficulties (edges 0.2 / 0.4 / 0.6 / 0.9).
+
+**Structure (reference windows):** 92,134 of 269,859 map windows (34 %) have a
+reference at the 0.85 threshold. Human repetition, from 3954 sampled difficulties, by the
+reference's similarity score (all modes and difficulties pooled; a window and its
+reference both empty are not counted):
+
+| Score | Windows | Copy | Mirror | Same rhythm | Different | Mean note F1 (best of copy/mirror) |
+|---|---|---|---|---|---|---|
+| < 0.50 | 6447 | 0.1 % | 0.1 % | 3 % | 97 % | 0.07 |
+| 0.60–0.65 | 7176 | 0.4 % | 0.5 % | 20 % | 80 % | 0.10 |
+| 0.70–0.75 | 13,609 | 1 % | 1 % | 32 % | 66 % | 0.14 |
+| 0.80–0.85 | 14,410 | 4 % | 5 % | 48 % | 43 % | 0.26 |
+| 0.85–0.90 | 14,088 | 7 % | 11 % | 53 % | 30 % | 0.35 |
+| 0.90–0.95 | 12,730 | 15 % | 19 % | 51 % | 16 % | 0.49 |
+| ≥ 0.95 | 12,799 | 29 % | 34 % | 33 % | 4 % | 0.73 |
+
+Exact and mirrored repeats only become common above about 0.85, and from there most
+matched windows at least repeat the rhythm. That is the training threshold. Mirrors are
+a bit more common than copies at every score.
+
+Human repetition on matched windows (score ≥ 0.85), **Standard**, per difficulty:
+
+| Difficulty | Windows | Copy | Mirror | Same rhythm | Different |
+|---|---|---|---|---|---|
+| Easy | 2598 | 21 % | 23 % | 38 % | 18 % |
+| Normal | 3719 | 19 % | 19 % | 43 % | 20 % |
+| Hard | 7496 | 19 % | 23 % | 41 % | 17 % |
+| Expert | 10,523 | 17 % | 22 % | 46 % | 16 % |
+| ExpertPlus | 13,809 | 14 % | 21 % | 49 % | 16 % |
+
+So on repeated music, human mappers copy or mirror about 35–44 % of windows, keep the
+rhythm with new notes in another 38–49 %, and do something different in under 20 %.
+Higher difficulties vary the notes a little more. WS10 can compare a generated map with
+these shares using `bsmapper.data.structure.repetition_profile`.
+
+**Other stats** (the same definitions as v0): 877 maps phase-corrected, 1311 with BPM
+changes, 136 remapped onto one tempo map. 8943 maps have lights (1595 with Chroma
+colours). Onset alignment peaks at 0 to +2 ticks for 96 % of difficulties. Note tokens
+per window: the median per-difficulty maximum is 198 and the p95 is 417.
 
 #### Dataset v0 (2026-10-21, 2712 maps)
 

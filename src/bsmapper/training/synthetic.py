@@ -4,7 +4,9 @@ Each map has "onsets" on a random 1/2-beat pattern. The onset feature column
 spikes there and one mel band per grid column lights up; notes sit on exactly
 those ticks, alternate colour and up/down swings, and take their column from
 the lit band. Lights flash on every note. So a model can learn the mapping, and
-a tiny one can overfit it quickly.
+a tiny one can overfit it quickly. From window 2 on, every window repeats the
+audio and notes of the window two before it, and the manifest names that window
+as its reference (``ref_start``, ``ref_score`` 1.0), as dataset v1 does.
 """
 
 from __future__ import annotations
@@ -108,6 +110,13 @@ def write_synthetic_dataset(
             density = max(_DENSITY[d] for d in difficulties)
             hits = slots[rng.random(len(slots)) < density]
             cols = rng.integers(0, 4, size=len(hits))
+            first = hits < 2 * WINDOW_TICKS  # windows 2.. repeat windows 0..
+            reps = [(hits[first] + r * 2 * WINDOW_TICKS, cols[first])
+                    for r in range(1, (n_windows + 1) // 2)]  # fmt: skip
+            hits = np.concatenate([hits[first], *(h for h, _ in reps)])
+            cols = np.concatenate([cols[first], *(c for _, c in reps)])
+            cols = cols[hits < ticks]
+            hits = hits[hits < ticks]
             f[hits, ONSET_COL] = 1.0
             for t, x in zip(hits, cols, strict=True):
                 f[t, 10 + 15 * x : 20 + 15 * x] = -10.0
@@ -122,6 +131,7 @@ def write_synthetic_dataset(
             lights["window_offsets"].append(lo)
             for d in difficulties:
                 keep = rng.random(len(hits)) < _DENSITY[d] / density
+                keep = np.tile(keep[hits < 2 * WINDOW_TICKS], n_windows)[: len(hits)]
                 on, cs = hits[keep], cols[keep]
                 per_window = []
                 for k in range(n_windows):
@@ -130,7 +140,10 @@ def write_synthetic_dataset(
                 tokens, offsets = _track(per_window, NOTE_VOCAB)
                 nps = len(on) / (ticks / TICKS_PER_BEAT * 0.5)  # 120 BPM
                 style = float(rng.random())
-                cond = Conditioning(Characteristic.STANDARD, d, nps=nps, style=style)
+                intensity = float(rng.random())
+                cond = Conditioning(
+                    Characteristic.STANDARD, d, nps=nps, style=style, intensity=intensity
+                )
                 manifest.append(
                     {
                         "key": key,
@@ -139,6 +152,9 @@ def write_synthetic_dataset(
                         "difficulty": d.value,
                         "nps": nps,
                         "style": style,
+                        "intensity": intensity,
+                        "ref_start": [-1, -1, *(k * WINDOW_TICKS for k in range(n_windows - 2))],
+                        "ref_score": [float("nan")] * 2 + [1.0] * (n_windows - 2),
                         "flag_bombs": False,
                         "flag_walls": False,
                         "flag_arcs": False,

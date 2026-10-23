@@ -1,0 +1,79 @@
+# note_v1 on dataset v1 (data/processed_v1, ~4x v0), RTX 3090 24 GB, bf16.
+#   bsmapper train configs/note_v1.yaml        (resumes from run.out_dir/last.pt)
+# Tokenizer v2: INTENSITY prefix token and reference windows (REF ... REF_END), see
+# docs/MODEL.md ("note_v1"). Wider and deeper than note_v0, since v0 overfit 2k songs
+# and v1 has ~10k. Size and step count were set from a benchmark on the real data
+# (docs/MODEL.md): d=640 peaked at 19.8 GB and 1.4 steps/s, too much for one night, so
+# v1 keeps d=512 and deepens the note decoder (8 -> 10 layers, 97M parameters).
+# Stability (run 1 diverged at step ~2.8k, right after warmup): QK-LayerNorm, z-loss 1e-4,
+# AdamW betas (0.9, 0.95), peak lr 2e-4 with 4k warmup steps, and the divergence guard.
+model:
+  d_model: 512
+  n_heads: 8
+  ff_mult: 4
+  dropout: 0.1
+  encoder_layers: 6
+  decoder_layers: 10
+  max_len: 1536
+  light_layers: 6
+  light_max_len: 1536
+  note_memory_layers: 2
+  note_memory_len: 512
+  grad_checkpointing: false
+  qk_norm: true
+data:
+  root: data/processed_v1
+  context_events: 16
+  max_note_tokens: 1024     # prompt (prefix, reference <= 256, tail) + body; longer is cropped
+  max_light_tokens: 1024
+  max_light_body: 1024
+  note_memory_tokens: 512
+  style_dropout: 0.2
+  nps_dropout: 0.25         # higher than v0: generation may lean on INTENSITY instead of NPS
+  context_dropout: 0.05
+  intensity_dropout: 0.15
+  ref_dropout: 0.3
+  ref_threshold: 0.85
+  max_ref_tokens: 256
+  characteristic_weights: {Standard: 1.0, OneSaber: 2.0, 90Degree: 4.0, 360Degree: 3.0}
+  difficulty_weights: {Easy: 0.5, Normal: 1.0, Hard: 1.0, Expert: 1.0, ExpertPlus: 1.0}
+  oversample_easy: false
+  gold_weight: 1.5
+  empty_window_weight: 0.25
+  lights_gold_only: true
+  num_workers: 6
+optim:
+  lr: 2.0e-4
+  min_lr_ratio: 0.1
+  betas: [0.9, 0.95]
+  weight_decay: 0.05
+  warmup_steps: 4000
+  max_steps: 80000
+  grad_clip: 1.0
+  label_smoothing: 0.1
+  batch_size: 32
+  grad_accum: 1
+  light_batch_size: 16
+  light_loss_weight: 0.5
+  z_loss: 1.0e-4
+run:
+  out_dir: checkpoints/note_v1
+  device: cuda
+  precision: bf16
+  seed: 0
+  log_every: 100
+  eval_every: 2000
+  eval_batches: 50
+  save_every: 2000
+  keep_checkpoints: 3
+  early_save_every: 1000    # step snapshots every 1k steps up to 10k, then every 2k
+  early_save_until: 10000
+  cuda_memory_fraction: 0.82  # <= 20.1 GB reserved; leaves room for brief inference
+  guard:                    # roll back to good.pt on a sustained blow-up (training/guard.py)
+    enabled: true
+    grad_ratio: 10.0
+    grad_steps: 100
+    grad_window: 150
+    loss_jump: 1.0
+    max_rollbacks: 3
+    lr_factor: 0.5

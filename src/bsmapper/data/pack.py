@@ -12,6 +12,11 @@ Reads ``work/`` (see ``build``) and the raw manifest, and writes::
 
 Feature row ``j`` of a map is map beat ``j / 24``; a map has ``n_windows * 384`` rows,
 so window ``k`` is rows ``k*384 .. (k+1)*384`` from the map's ``feature_row``.
+
+Dataset v1 adds two labels per kept difficulty: ``intensity`` (``data.intensity``)
+and, per window, the best earlier reference span ``ref_start`` / ``ref_score``
+(``data.structure``; the threshold is applied at training time). ``dataset.json``
+gets the intensity calibration and the human repetition stats on matched windows.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ import numpy as np
 from bsmapper.data.build import BUILDER_VERSION, MAPS_DIR, TRACK_DIR, WORK_DIR, read_json
 from bsmapper.data.mapgrid import FEATURE_COLUMNS, FEATURE_DIM, N_MELS, MapTiming, grid_drift
 from bsmapper.data.songs import SPLITS, group_songs, split_for
+from bsmapper.data.structure import DEFAULT_REF_THRESHOLD
 from bsmapper.data.tech import (
     FEATURES,
     calibrate_by_difficulty,
@@ -40,7 +46,7 @@ from bsmapper.data.tech import (
 
 log = logging.getLogger(__name__)
 
-DATASET_VERSION = 0
+DATASET_VERSION = 1
 MANIFEST = "manifest.parquet"
 
 
@@ -55,6 +61,8 @@ class PackConfig:
     test_fraction: float = 0.05
     maps_per_shard: int = 64
     tech_ridge_alpha: float = 1.0
+    ref_threshold: float = DEFAULT_REF_THRESHOLD  # for the repetition stats only
+    repetition_sample: int = 4000  # difficulties sampled for the repetition stats
 
 
 def _pa():
@@ -254,10 +262,26 @@ def pack(
         r["tech_score"] = float(s)
         r["style"] = float(st)
 
+    # --- intensity: percentile within (characteristic, difficulty, tempo)
+    from bsmapper.data.intensity import bpm_bucket, intensity_labels
+
+    for r in kept_rows:
+        r["bpm"] = recs[r["key"]]["timing"]["bpm"]
+    intensity, intensity_cal = intensity_labels(kept_rows)
+    for r, x in zip(kept_rows, intensity, strict=True):
+        r["intensity"] = float(x)
+        r["bpm_bucket"] = bpm_bucket(r["bpm"])
+
     # --- shards
     _clear(out_dir)
-    from bsmapper.tokenizer import nps_bucket, style_bucket
+    from bsmapper.data.structure import References, find_references
+    from bsmapper.tokenizer import intensity_bucket, nps_bucket, style_bucket
     from bsmapper.tokenizer.grid import WINDOW_TICKS
+
+    rng = np.random.default_rng(0)
+    sample_p = min(1.0, cfg.repetition_sample / max(len(kept_rows), 1))
+    repetition_samples: list[tuple[str, str, np.ndarray, np.ndarray, References]] = []
+    ref_maps = ref_windows = 0
 
     by_key: dict[str, list[dict]] = {}
     for r in kept_rows:
@@ -286,6 +310,13 @@ def pack(
                 with np.load(work / MAPS_DIR / f"{key}.npz") as z:
                     f = z["features"]
                     feats[row0 : row0 + len(f)] = f
+                    n_win = recs[key]["n_windows"]
+                    if "structure" in z.files:
+                        refs = find_references(z["structure"].astype(np.float32), n_win)
+                    else:
+                        refs = References(np.full(n_win, -1), np.full(n_win, np.nan))
+                    ref_maps += 1
+                    ref_windows += int((refs.kept(cfg.ref_threshold) >= 0).sum())
                     m.update(feature_shard=name, feature_row=row0, feature_rows=len(f))
                     if "light" in z.files:
                         m.update(light_shard=name, light_row=len(light_rows["key"]))
@@ -306,6 +337,9 @@ def pack(
                             "nps_bucket": nps_bucket(r["nps"]),
                             "style_bucket": style_bucket(r["style"])
                             if np.isfinite(r["style"]) else -1,
+                            "intensity_bucket": intensity_bucket(r["intensity"]),
+                            "ref_start": refs.start.tolist(),
+                            "ref_score": [float(x) for x in refs.score],
                             "max_window_tokens": int(np.diff(offsets).max()),
                             "n_windows": recs[key]["n_windows"],
                             "feature_shard": name,
@@ -325,6 +359,10 @@ def pack(
                         tok_rows["difficulty"].append(r["difficulty"])
                         tok_rows["tokens"].append(tokens)
                         tok_rows["window_offsets"].append(offsets)
+                        if rng.random() < sample_p:
+                            repetition_samples.append(
+                                (r["characteristic"], r["difficulty"], tokens, offsets, refs)
+                            )
                 row0 += len(f)
             feats.flush()
             del feats
@@ -340,6 +378,11 @@ def pack(
     from bsmapper.data.stats import build_stats
 
     stats = build_stats(map_rows, diff_rows, manifest_rows, cals, groups)
+    stats["intensity"] = intensity_cal
+    stats["structure"] = structure_stats(repetition_samples, cfg.ref_threshold)
+    stats["structure"]["maps"] = ref_maps
+    stats["structure"]["windows_with_reference"] = ref_windows
+    stats["structure"]["windows"] = int(sum(recs[k]["n_windows"] for k in kept_maps))
     meta = {
         "dataset_version": DATASET_VERSION,
         "builder_version": BUILDER_VERSION,
@@ -359,6 +402,41 @@ def pack(
     }
     (out_dir / "dataset.json").write_text(json.dumps(meta, indent=1, default=_json_default))
     return meta
+
+
+def structure_stats(samples, threshold: float) -> dict[str, Any]:
+    """Human repetition on matched windows: the share of copies, mirrors, same-rhythm
+    and different windows per difficulty (at ``threshold``), and by score bin (all
+    difficulties pooled) to tune the threshold."""
+    from bsmapper.data.structure import REPETITION_KINDS, window_repetition
+
+    bins = np.round(np.arange(0.5, 1.0001, 0.05), 2)
+    by_bin: dict[str, Counter[str]] = {}
+    f1: dict[str, list[float]] = {}
+    by_diff: dict[str, Counter[str]] = {}
+    for char, diff, tokens, offsets, refs in samples:
+        for _, score, kind, scores in window_repetition(tokens, offsets, refs):
+            if kind is None:
+                continue
+            b = bins[max(0, np.searchsorted(bins, score, "right") - 1)]
+            label = f"{b:.2f}" if score >= bins[0] else f"<{bins[0]:.2f}"
+            by_bin.setdefault(label, Counter())[kind] += 1
+            f1.setdefault(label, []).append(max(scores["copy"], scores["mirror"]))
+            if score >= threshold and char == "Standard":
+                by_diff.setdefault(diff, Counter())[kind] += 1
+
+    def shares(c: Counter[str]) -> dict[str, float]:
+        n = sum(c.values())
+        return {"n": n, **{k: c[k] / n if n else float("nan") for k in REPETITION_KINDS}}
+
+    return {
+        "threshold": threshold,
+        "sampled_difficulties": len(samples),
+        "by_score": {
+            k: {**shares(by_bin[k]), "mean_note_f1": float(np.mean(f1[k]))} for k in sorted(by_bin)
+        },
+        "standard_by_difficulty": {d: shares(c) for d, c in sorted(by_diff.items())},
+    }
 
 
 def _token_table(pa, rows: dict[str, list]):
