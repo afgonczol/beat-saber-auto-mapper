@@ -11,13 +11,24 @@ notes of that span as a reference block, except ``ref_dropout`` of the time.
 A light example is ``BOS context SEP body EOS`` in the lighting vocabulary, the same
 audio, and the note track of one of the map's difficulties (``BOS prefix SEP body EOS``)
 for the lighting decoder's note memory.
+
+For a lighting decoder with the v2 light vocabulary (WS8b), a light example is ``BOS
+LSTYLE LEVEL PAL FLIPS [REF ref REF_END] context SEP body EOS``: the map's style label
+(``data.light_styles``, from ``bsmapper lights styles``), the window's own scene
+(``tokenizer.window_scene``) and the human light events of the window's reference
+span. Each part has its own dropout to ``_NONE`` / no block, so generation can leave
+any of them out. With ``light_labelled_only`` only labelled maps are trained on, which
+leaves out Chroma lightID / strobe sequences and too sparse lightshows.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import random
 from collections import defaultdict
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -28,17 +39,24 @@ from bsmapper.tokenizer import (
     BOS,
     EOS,
     LIGHT_GRAMMAR,
+    LIGHT_REF,
+    LIGHT_REF_END,
+    LIGHT_TOKENIZER_VERSION,
     NOTE_GRAMMAR,
     PAD,
     REF,
     REF_END,
     SEP,
     TOKENIZER_VERSION,
+    LightPrompt,
     span_tokens,
     tail_context,
+    window_scene,
 )
 from bsmapper.training.config import DataConfig
 from bsmapper.training.store import DatasetStore
+
+log = logging.getLogger(__name__)
 
 IGNORE = -100
 _DIFF_RANK = {d.value: i for i, d in enumerate(Difficulty)}
@@ -50,9 +68,13 @@ def note_sequence(
     body: list[int],
     max_len: int,
     ref: list[int] | None = None,
+    ref_ids: tuple[int, int] = (REF, REF_END),
 ):
-    """(ids, loss_start): the first target position predicts the first body token."""
-    block = [] if ref is None else [REF, *ref, REF_END]
+    """(ids, loss_start): the first target position predicts the first body token.
+
+    ``ref_ids`` are the vocabulary's ``REF`` / ``REF_END`` (the light vocabulary's for
+    light examples)."""
+    block = [] if ref is None else [ref_ids[0], *ref, ref_ids[1]]
     ids = [BOS, *prefix, *block, *context, SEP, *body, EOS]
     body_offset = len(prefix) + len(block) + len(context) + 2
     if len(ids) > max_len:
@@ -127,6 +149,19 @@ class NoteWindows(Dataset):
         return {"features": store.features(i, k), "tokens": ids, "loss_start": start}
 
 
+def load_light_styles(store: DatasetStore, cfg: DataConfig) -> dict | None:
+    """The ``bsmapper lights styles`` file of the dataset (``cfg.light_styles``), if any."""
+    if not cfg.light_styles:
+        return None
+    path = Path(cfg.light_styles)
+    if not path.is_absolute():
+        path = store.root / path
+    if not path.is_file():
+        log.warning("no light style file %s: lights train with LSTYLE_NONE", path)
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 class LightWindows(Dataset):
     def __init__(
         self,
@@ -134,11 +169,24 @@ class LightWindows(Dataset):
         cfg: DataConfig,
         train: bool = True,
         version: int = TOKENIZER_VERSION,
+        light_version: int = 1,
+        styles: dict | None = None,
     ) -> None:
+        """``version`` is the note prompt layout (note memory), ``light_version`` the light
+        one; ``styles`` the light style file's contents (version 2 only)."""
         self.store, self.cfg, self.train = store, cfg, train
         self.version = version
+        if not 1 <= light_version <= LIGHT_TOKENIZER_VERSION:
+            raise ValueError(f"unknown light tokenizer version {light_version}")
+        self.light_version = light_version
+        self.labels: dict[str, int] | None = None
+        if light_version >= 2 and styles is not None:
+            self.labels = {k: int(v) for k, v in styles["labels"].items()}
+        labelled_only = self.labels is not None and cfg.light_labelled_only
         rows_by_key: dict[str, list[int]] = defaultdict(list)
         for i, r in enumerate(store.rows):
+            if labelled_only and r["key"] not in self.labels:  # type: ignore[operator]
+                continue
             if r["key"] in store.lights and (r.get("gold") or not cfg.lights_gold_only):
                 rows_by_key[r["key"]].append(i)
         self.rows_by_key = dict(rows_by_key)
@@ -167,10 +215,26 @@ class LightWindows(Dataset):
         rng = random if self.train else random.Random(j)
         i = self._note_row(key, rng)
         track = store.lights[key]
+        body = track.body(k)
         context = []
         if k and not rng.random() < cfg.context_dropout:
             context = tail_context(track.body(k - 1), LIGHT_GRAMMAR, cfg.context_events)
-        ids, start = note_sequence([], context, track.body(k), cfg.max_light_tokens)
+        prefix: list[int] = []
+        ref = None
+        if self.light_version >= 2:
+            style = None
+            if self.labels is not None and not rng.random() < cfg.light_style_dropout:
+                style = self.labels.get(key)
+            prompt = LightPrompt(style)
+            if not rng.random() < cfg.scene_dropout:
+                prompt = prompt.with_scene(window_scene(body))
+            prefix = prompt.prefix_ids()
+            s = store.ref_start(i, k, cfg.ref_threshold)
+            if s is not None and not rng.random() < cfg.light_ref_dropout:
+                ref = span_tokens(track, s, LIGHT_GRAMMAR, cfg.max_light_ref_tokens)
+        ids, start = note_sequence(
+            prefix, context, body, cfg.max_light_tokens, ref, (LIGHT_REF, LIGHT_REF_END)
+        )
         notes, _ = note_sequence(
             store.conditioning(i).prefix_ids(version=self.version),
             [],

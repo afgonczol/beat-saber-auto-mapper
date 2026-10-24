@@ -19,6 +19,20 @@ const LIGHTING: { value: LightingStyle; label: string; hint: string }[] = [
   { value: "chroma", label: "Chroma", hint: "Custom RGB colors (needs the Chroma mod)" },
 ];
 
+type LightStyle = NonNullable<JobOptions["light_style"]>;
+
+// Look of the model's lights (light_v2 checkpoints); "" = the server's configured default.
+const LIGHT_STYLES: { value: LightStyle | ""; label: string; hint: string }[] = [
+  { value: "", label: "Default", hint: "The configured default (auto unless set)" },
+  { value: "auto", label: "Auto", hint: "Picked for the song; another seed may pick another" },
+  { value: "pulse", label: "Pulse", hint: "Beat-pulsed fades with laser sweeps" },
+  { value: "calm", label: "Calm", hint: "Slow fade pulses, long holds, little laser motion" },
+  { value: "scenes", label: "Scenes", hint: "Sustained on/off scenes, few colour flips" },
+  { value: "flash", label: "Flash", hint: "Fast flashes with ring zooms and spins" },
+  { value: "accent", label: "Accent", hint: "White accents and colour boosts" },
+  { value: "none", label: "Model's choice", hint: "No style token: the model picks by chance" },
+];
+
 function toggle<T>(list: T[], item: T): T[] {
   return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
 }
@@ -59,6 +73,7 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   const [modes, setModes] = useState<Characteristic[]>(["Standard"]);
   const [difficulties, setDifficulties] = useState<Difficulty[]>(["Hard", "Expert", "ExpertPlus"]);
   const [lighting, setLighting] = useState<LightingStyle>("v3");
+  const [lightStyle, setLightStyle] = useState<LightStyle | "">("");
   const [useStyle, setUseStyle] = useState(true);
   const [style, setStyle] = useState(0.5);
   const [seed, setSeed] = useState(0);
@@ -95,6 +110,7 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
       style: useStyle ? style : null,
       intensity: useIntensity ? intensity : null,
       repetition: useRepetition ? repetition : null,
+      light_style: lightStyle === "" ? null : lightStyle,
       arcs,
       chains,
       seed,
@@ -195,6 +211,16 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
               </label>
             ))}
           </div>
+          <label className="light-style" title={LIGHT_STYLES.find((l) => l.value === lightStyle)?.hint}>
+            Light style{" "}
+            <select value={lightStyle} onChange={(e) => setLightStyle(e.target.value as LightStyle | "")}>
+              {LIGHT_STYLES.map((l) => (
+                <option key={l.value} value={l.value} title={l.hint}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </fieldset>
 
         <fieldset>

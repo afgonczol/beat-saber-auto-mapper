@@ -9,6 +9,8 @@ import typer
 app = typer.Typer(help="Automatic Beat Saber map generator.", no_args_is_help=True)
 data_app = typer.Typer(help="Dataset scraping and building (WS3).")
 app.add_typer(data_app, name="data")
+lights_app = typer.Typer(help="Lighting style labels and scene tables (WS8b).")
+app.add_typer(lights_app, name="lights")
 
 
 _MODE_ALIASES = {"90": "90Degree", "360": "360Degree", "onehand": "OneSaber"}
@@ -110,6 +112,11 @@ def generate(
     lighting_source: str = typer.Option(
         "auto", help="Lights from: model, rules, or auto (the model when notes are)."
     ),
+    light_style: str | None = typer.Option(
+        None,
+        help="Look of model lights (light_v2 checkpoints): auto (picked for the song), none, "
+        "pulse, calm, scenes, flash or accent. Default: [generate] light_style, else auto.",
+    ),
     device: str | None = typer.Option(None, help="cuda or cpu; default cuda when available."),
     bombs: bool | None = typer.Option(None, "--bombs/--no-bombs", help="Default: per difficulty."),
     walls: bool | None = typer.Option(None, "--walls/--no-walls", help="Default: on."),
@@ -144,6 +151,7 @@ def generate(
         configured_intensity,
         configured_repetition,
     )
+    from bsmapper.generation.lighting import LIGHT_STYLE_CHOICES, configured_light_style
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
 
@@ -155,6 +163,7 @@ def generate(
     for value, choices, hint in (
         (generator, ("auto", "model", "stub"), "--generator"),
         (lighting_source, ("auto", "model", "rules"), "--lighting-source"),
+        (light_style or "auto", LIGHT_STYLE_CHOICES, "--light-style"),
     ):
         if value not in choices:
             raise typer.BadParameter(f"choose from {', '.join(choices)}", param_hint=hint)
@@ -170,6 +179,8 @@ def generate(
         if repetition is None:
             repetition = configured_repetition()
         objects = configured_objects()
+        if light_style is None:
+            light_style = configured_light_style()
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
@@ -186,6 +197,7 @@ def generate(
         jump_defaults=jump_defaults,
         environment=environment,
         lighting_source=lighting_source,
+        light_style=light_style,
         bombs=objects.get("bombs") if bombs is None else bombs,
         walls=objects.get("walls") if walls is None else walls,
         arcs=objects.get("arcs") if arcs is None else arcs,
@@ -223,7 +235,9 @@ def generate(
     bm = result.beatmap
     typer.echo(
         f"\n{bm.song_name} - {bm.song_author or '?'}  ({result.song.bpm:g} BPM, "
-        f"{bm.environment}, {lighting} lighting from {pipeline.last_lighting}, {bm.mapper})"
+        f"{bm.environment}, {lighting} lighting from {pipeline.last_lighting}"
+        + (f" ({pipeline.last_light_style} style)" if pipeline.last_light_style else "")
+        + f", {bm.mapper})"
     )
     for res in result.difficulties:
         d = res.dmap
@@ -433,6 +447,39 @@ def data_build(
 
         for line in summary_lines(meta["stats"]):
             typer.echo(line)
+
+
+@lights_app.command("styles")
+def lights_styles(
+    dataset: Annotated[Path, typer.Argument(help="A built dataset (v1).")] = Path(
+        "data/processed_v1"
+    ),
+    k: int = typer.Option(5, min=2, max=8, help="Number of styles."),
+    workers: int = typer.Option(8, min=1),
+    limit: int | None = typer.Option(None, help="Only the first N maps (for a quick test)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Cluster the gold human lightshows into styles and write DATASET/light_styles.json.
+
+    Light training (version 2 light prompt) reads the labels from it, and the trainer
+    copies its style model (names, auto-pick, scene tables) into the checkpoint.
+    """
+    from bsmapper.lighting.style_build import STYLE_FILE, build
+
+    _setup_logging(verbose)
+    if not (dataset / "maps.parquet").is_file():
+        raise typer.BadParameter(f"{dataset} is not a built dataset", param_hint="DATASET")
+    out = build(dataset, k=k, workers=workers, limit=limit)
+    stats = out["model"]["stats"]
+    typer.echo(f"{stats['labelled']} of {stats['maps']} lightshows labelled; "
+               f"excluded: {stats['excluded']}")  # fmt: skip
+    for name, n in stats["sizes"].items():
+        typer.echo(f"  {name:<8} {n:5d}  {stats['descriptions'].get(name, '')}")
+    typer.echo(
+        f"auto-pick val accuracy {stats['auto_pick_val_accuracy']:.3f} "
+        f"(majority {stats['majority_val_accuracy']:.3f}, {stats['val_maps']} maps)"
+    )
+    typer.echo(f"wrote {dataset / STYLE_FILE}")
 
 
 @app.command()

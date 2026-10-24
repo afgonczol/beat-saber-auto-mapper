@@ -186,3 +186,5 @@ button.warning:hover { background: #1c2030; }
   .style-slider { grid-template-columns: auto 1fr auto; }
   .style-slider output { display: none; }
 }
+.light-style { display: block; margin-top: 10px; font-size: 0.92rem; color: var(--muted); }
+.light-style select { margin-left: 6px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: inherit; }

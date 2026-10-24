@@ -6,7 +6,8 @@ batch; the loss is ``note_loss + light_loss_weight * light_loss``. The audio
 encoder is shared by both decoders.
 
     out_dir/last.pt            latest state (resumed automatically)
-    out_dir/best.pt            lowest validation note loss
+    out_dir/best.pt            lowest validation note loss (light loss when notes are
+                               not trained)
     out_dir/good.pt            newest snapshot taken while the divergence guard saw a
                                healthy run: the rollback target
     out_dir/step_NNNNNNN.pt    periodic snapshots (the newest ``keep_checkpoints``),
@@ -30,11 +31,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from bsmapper.models.checkpoint import CHECKPOINT_FORMAT, model_state
+from bsmapper.models.checkpoint import CHECKPOINT_FORMAT, load_weights, model_state
 from bsmapper.models.mapper import MapperModel
-from bsmapper.tokenizer import version_for_vocab
+from bsmapper.tokenizer import light_version_for_vocab, version_for_vocab
 from bsmapper.training.config import TrainConfig
-from bsmapper.training.data import IGNORE, LightWindows, NoteWindows, collate, infinite_loader
+from bsmapper.training.data import (
+    IGNORE,
+    LightWindows,
+    NoteWindows,
+    collate,
+    infinite_loader,
+    load_light_styles,
+)
 from bsmapper.training.guard import DivergenceGuard
 from bsmapper.training.store import DatasetStore
 
@@ -147,9 +155,20 @@ class Trainer:
         if not (self.train_notes or self.train_lights):
             raise ValueError("nothing to train: train_notes and train_lights are both off")
         self.version = version_for_vocab(cfg.model.note_vocab)  # prompt layout of this model
+        self.light_version = (
+            light_version_for_vocab(cfg.model.light_vocab) if cfg.model.has_lighting else 1
+        )
+        styles = load_light_styles(self.train_store, data) if self.light_version >= 2 else None
+        self.light_styles = styles  # the style file; its "model" goes into checkpoints
         self.notes = NoteWindows(self.train_store, data, version=self.version)
         self.lights = (
-            LightWindows(self.train_store, data, version=self.version)
+            LightWindows(
+                self.train_store,
+                data,
+                version=self.version,
+                light_version=self.light_version,
+                styles=styles,
+            )
             if self.train_lights
             else None
         )
@@ -157,6 +176,17 @@ class Trainer:
             log.warning("no light windows to train on (gold-only and none gold?); lights off")
             self.lights, self.train_lights = None, False
 
+        init = run.init_from and not (resume and (self.out_dir / "last.pt").exists())
+        if init:
+            report = load_weights(self.model, run.init_from)
+            log.info("initialised from %s (grown: %s)", run.init_from, report["grown"] or "none")
+        self.frozen = set(run.freeze)
+        unknown = self.frozen - {name for name, _ in self.model.named_children()}
+        if unknown:
+            raise ValueError(f"run.freeze names unknown modules: {sorted(unknown)}")
+        for name, module in self.model.named_children():
+            if name in self.frozen:
+                module.requires_grad_(False)
         self.model.to(self.device)
         self.optimizer = torch.optim.AdamW(
             _param_groups(self.model, cfg.optim.weight_decay),
@@ -176,7 +206,7 @@ class Trainer:
         self.best_val = float("inf")
         if resume and (self.out_dir / "last.pt").exists():
             self.load(self.out_dir / "last.pt")
-        else:
+        elif not init:  # a fine-tune keeps the normalisation its encoder was trained with
             mean, std = self.train_store.feature_stats(seed=run.seed)
             self.model.set_feature_stats(mean, std)
         self.forward_model = torch.compile(self.model) if run.compile else self.model
@@ -192,10 +222,27 @@ class Trainer:
     def _to(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
 
+    def _train_mode(self) -> None:
+        """Train mode, except for frozen modules (no dropout where nothing learns)."""
+        self.model.train()
+        for name, module in self.model.named_children():
+            if name in self.frozen:
+                module.eval()
+
+    def _audio(self, features: torch.Tensor) -> torch.Tensor:
+        if "encoder" in self.frozen:
+            with torch.no_grad():
+                return self.forward_model.encode_audio(features)
+        return self.forward_model.encode_audio(features)
+
+    @property
+    def best_metric(self) -> str:
+        return "note_loss" if self.train_notes else "light_loss"
+
     def note_loss(self, batch: dict[str, torch.Tensor], with_z: bool = False):
         m = self.forward_model
         with self._autocast():
-            memory = m.encode_audio(batch["features"])
+            memory = self._audio(batch["features"])
             logits = m.note_logits(memory, batch["inputs"])
         out = token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
         return (*out, z_loss(logits, batch["targets"])) if with_z else out
@@ -203,7 +250,7 @@ class Trainer:
     def light_loss(self, batch: dict[str, torch.Tensor], with_z: bool = False):
         m = self.forward_model
         with self._autocast():
-            memory = m.encode_audio(batch["features"])
+            memory = self._audio(batch["features"])
             logits = m.light_logits(memory, batch["note_tokens"], batch["inputs"])
         out = token_loss(logits, batch["targets"], self.cfg.optim.label_smoothing)
         return (*out, z_loss(logits, batch["targets"])) if with_z else out
@@ -263,7 +310,7 @@ class Trainer:
         if self.step == 0:
             writer.add_text("config", f"```\n{self._config_yaml()}\n```")
             writer.add_scalar("model/params_M", self.model.num_parameters() / 1e6, 0)
-        self.model.train()
+        self._train_mode()
         last: dict[str, float] = {}
         meter = _Meter()
         t0 = time.perf_counter()
@@ -321,10 +368,10 @@ class Trainer:
                     writer.add_scalar(f"val/{k}", v, self.step)
                 log.info("step %d val %s", self.step, _fmt(val))
                 last.update({f"val_{k}": v for k, v in val.items()})
-                if val.get("note_loss", float("inf")) < self.best_val:
-                    self.best_val = val["note_loss"]
+                if val.get(self.best_metric, float("inf")) < self.best_val:
+                    self.best_val = val[self.best_metric]
                     self.save(self.out_dir / "best.pt")
-                self.model.train()
+                self._train_mode()
             every = self._save_every()
             if self.step % every == 0 or self.step == total:
                 self.save(self.out_dir / "last.pt")
@@ -349,7 +396,14 @@ class Trainer:
             notes = NoteWindows(self.val_store, cfg.data, train=False, version=self.version)
             tasks.append(("note", notes, self.note_loss))
         if self.train_lights:
-            lights = LightWindows(self.val_store, cfg.data, train=False, version=self.version)
+            lights = LightWindows(
+                self.val_store,
+                cfg.data,
+                train=False,
+                version=self.version,
+                light_version=self.light_version,
+                styles=self.light_styles,
+            )
             if len(lights):
                 tasks.append(("light", lights, self.light_loss))
         for name, ds, fn in tasks:
@@ -373,6 +427,8 @@ class Trainer:
 
     def save(self, path: Path) -> None:
         state = model_state(self.model)
+        if self.light_styles is not None:
+            state["light_styles"] = self.light_styles["model"]
         state.update(
             step=self.step,
             best_val=self.best_val,

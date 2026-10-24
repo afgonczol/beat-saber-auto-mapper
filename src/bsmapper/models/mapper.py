@@ -154,6 +154,7 @@ class MapperModel(nn.Module):
     def __init__(self, cfg: ModelConfig) -> None:
         super().__init__()
         self.cfg = cfg
+        self.light_styles: dict | None = None  # the checkpoint's StyleModel (light prompt v2)
         self.encoder = AudioEncoder(cfg)
         self.notes = TokenDecoder(cfg, cfg.note_vocab, cfg.decoder_layers, cfg.max_len)
         if cfg.has_lighting:

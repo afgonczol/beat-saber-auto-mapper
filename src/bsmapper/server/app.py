@@ -38,6 +38,7 @@ from bsmapper.server.models import (
     JobEvent,
     JobInfo,
     JobOptions,
+    LightStyle,
     MapPreview,
     RegenerateRequest,
 )
@@ -153,6 +154,13 @@ def _api(manager: JobManager) -> APIRouter:
                 "twice as strongly; omit for the configured default.",
             ),
         ] = None,
+        light_style: Annotated[
+            LightStyle | None,
+            Form(
+                description="Look of model lights: auto, none, pulse, calm, scenes, flash or "
+                "accent; omit for the configured default."
+            ),
+        ] = None,
         # Text, not bool: FastAPI reads a missing optional bool form field as false.
         arcs: Annotated[
             Literal["true", "false"] | None,
@@ -185,6 +193,7 @@ def _api(manager: JobManager) -> APIRouter:
             seed=seed,
             intensity=intensity,
             repetition=repetition,
+            light_style=light_style,
             arcs=None if arcs is None else arcs == "true",
             chains=None if chains is None else chains == "true",
             njs=njs,

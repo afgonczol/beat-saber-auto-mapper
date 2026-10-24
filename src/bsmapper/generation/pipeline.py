@@ -101,6 +101,9 @@ class GenerateOptions:
     version: FormatVersion = "v3"
     # "model" needs a pipeline with a light model; "auto" uses it when there is one.
     lighting_source: str = "auto"
+    # Lighting style of a v2 light model (WS8b): "auto" (picked for the song), "none" or a
+    # style name (``generation.lighting.LIGHT_STYLE_CHOICES``). Ignored by v1 models.
+    light_style: str = "auto"
     # Object types; None = what most human maps of that mode and difficulty use
     # (``density.object_flags``).
     bombs: bool | None = None
@@ -220,6 +223,7 @@ class Pipeline:
         self.ffmpeg = ffmpeg
         self.setup = None  # runtime.GeneratorSetup when built by make_pipeline
         self.last_lighting = ""  # "model" or "rules": what the last build used
+        self.last_light_style: str | None = None  # the style a v2 light model was asked for
         self.last_notes: list[str] = []  # remarks from the last build (fallbacks)
 
     @property
@@ -240,7 +244,7 @@ class Pipeline:
         lead_in = grid.lead_in_s()
         shift = map_beat_shift(lead_in, grid.beats_per_bar)
         tags = read_tags(Path(audio))
-        if getattr(self.generator, "needs_chroma", False):
+        if getattr(self.generator, "needs_chroma", False) or self._light_needs_chroma():
             self._add_chroma(Path(audio), result.analysis)
         log.info(
             "%.2f BPM, offset %.3f s, lead-in %.3f s, grid coverage %.0f%%, %d sections",
@@ -262,6 +266,13 @@ class Pipeline:
             title=title or tags.title,
             artist=artist if artist is not None else tags.artist,
         )
+
+    def _light_needs_chroma(self) -> bool:
+        """A v2 light model uses the structure references for its light references."""
+        from bsmapper.tokenizer import LIGHT_VOCAB_SIZES
+
+        cfg = getattr(self.light_model, "cfg", None)
+        return cfg is not None and cfg.has_lighting and cfg.light_vocab >= LIGHT_VOCAB_SIZES[2]
 
     @staticmethod
     def _add_chroma(audio: Path, analysis: AudioAnalysis) -> None:
@@ -415,11 +426,16 @@ class Pipeline:
         if self.light_model is not None and source in ("auto", "model"):
             from bsmapper.generation.lighting import ModelLightingGenerator
 
-            model_gen = ModelLightingGenerator(
-                self.light_model, time_offset_s=song.lead_in_s, seed=opts.seed
-            )
+            self.last_light_style = None
             try:
+                model_gen = ModelLightingGenerator(
+                    self.light_model,
+                    time_offset_s=song.lead_in_s,
+                    seed=opts.seed,
+                    light_style=opts.light_style,
+                )
                 self._light_with(model_gen, song, beatmap, opts)
+                self.last_light_style = model_gen.last_style
                 return "model", None
             except Exception as exc:  # any model failure: the L0 rules still light the map
                 log.warning("model lighting failed (%s); using the rule lightshow", exc)
