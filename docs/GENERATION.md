@@ -367,6 +367,13 @@ per 100 notes, except for one difficulty (below).
 - **Walls**: Stronger 90° Hard has 236 zero-length walls in the outer lanes (34.7
   `wall_duration` warnings per 100 notes). These are snapped "flick" walls, which 16% of
   human difficulties also have.
+- **Box-ins** (`wall_boxin`, after a playtest of Stronger Expert): walls closing both
+  centre columns within 300 ms are rare in generated maps. The playtested Stronger copy had 3
+  in 15 difficulties: Standard Expert beat 172.25, and One Saber Expert beats 134 and 246.
+  A fresh Stronger in all four modes had 1 in 20, Toxic 0 in 20, and 8 eval test songs
+  (Standard Hard to Expert+) 0 in 24. Generation now drops the later wall. Walls
+  overlapping in the same columns (Stronger Expert beats 164 and 164.125) are merged: 0–7
+  per difficulty.
 
 ## NJS and offset
 
