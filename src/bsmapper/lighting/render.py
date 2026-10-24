@@ -54,7 +54,10 @@ FADE_OUT = 1.0  # beats for a fade to reach black
 # Rotations always come back to the motion's rest pose (by default the environment's own
 # pose: angle 0, no spread). Lights parked at other angles can sit across the track and
 # hide the notes, which a playtest on Weave showed.
-SPIN_BEATS = 2.0  # one full turn, back to rest
+# One full turn, back to rest. A spin always takes this long: spins and zooms that come
+# while a turn is still running are ignored. Squeezing the turn instead whipped the
+# lights round at up to 5,000 deg/s in a playtest of Stronger (note_v1 writes spin rolls).
+SPIN_BEATS = 2.0
 ZOOM_BEATS = 1.0  # fan out and back
 SETTLE_BEATS = 1.0  # glide back to the rest pose after a move
 ZOOM_SPREAD_FACTOR = 3.0
@@ -167,18 +170,25 @@ class _Groups:
 def _spins(events: list[BasicEvent], motion: Motion, zoom_native: bool, out: _Groups) -> None:
     """Ring spins turn the spin groups one full turn; ring zooms fan their lights out.
 
-    Both end back in the rest pose, so no light is left parked across the track.
+    Both end back in the rest pose, so no light is left parked across the track. A spin
+    or zoom during a running turn (or fan) is ignored.
     """
     spin_beats = {e.beat for e in events if e.type == RING_SPIN}
     zoom_beats = set() if zoom_native else {e.beat for e in events if e.type == RING_ZOOM}
-    beats = sorted(spin_beats | zoom_beats)
+    beats: list[float] = []
+    busy = float("-inf")  # the running turn or fan ends here
+    for beat in sorted(spin_beats | zoom_beats):
+        if beat < busy - 1e-9:
+            continue
+        beats.append(beat)
+        busy = beat + (SPIN_BEATS if beat in spin_beats else ZOOM_BEATS / 2)
     wide = motion.spread * ZOOM_SPREAD_FACTOR or 45.0
     n_spins = 0
     for i, beat in enumerate(beats):
         gap = beats[i + 1] - beat if i + 1 < len(beats) else float("inf")
         spread = wide if beat in zoom_beats else motion.spread
         if beat in spin_beats:
-            move = min(SPIN_BEATS, gap / 2)
+            move = SPIN_BEATS
             direction = 1 + n_spins % 2  # alternate clockwise / counter-clockwise
             rot = _turn(move, motion.rest, loops=1, direction=direction)
             n_spins += 1
@@ -206,19 +216,26 @@ def _sweeps(
 ) -> None:
     """Laser speed events become back-and-forth sweeps around the rest pose.
 
-    Speed 0 glides back to rest; so does the end of the last sweep.
+    Speed 0 glides back to rest; so does the end of the last sweep. A repeated speed
+    continues the running sweep, and a new speed keeps the swing direction, so frequent
+    speed events change the pace instead of jerking the lasers back to one side.
     """
-    speeds = sorted((e for e in events if e.type == type_), key=lambda e: e.beat)
+    speeds: list[BasicEvent] = []
+    for e in sorted((e for e in events if e.type == type_), key=lambda e: e.beat):
+        if not speeds or e.value != speeds[-1].value:
+            speeds.append(e)
+    k = 0  # swing phase: even swings go to +amp, odd ones to -amp
     for i, event in enumerate(speeds):
         last = i + 1 == len(speeds)
         stop = end if last else speeds[i + 1].beat
         if event.value <= 0:
             for gid in motion.groups:
                 out.add(event.beat, "rotation", gid, rest_box(motion, SETTLE_BEATS, mirror))
+            k = 0
             continue
         period = sweep_period(event.value)
         amp = sweep_amplitude(event.value, motion.max_angle)
-        beat, k = event.beat, 0
+        beat = event.beat
         while beat < stop - 1e-9:
             # Automatic direction takes the short way, so the swing passes through rest.
             angle = (motion.rest + (amp if k % 2 == 0 else -amp)) % 360.0
