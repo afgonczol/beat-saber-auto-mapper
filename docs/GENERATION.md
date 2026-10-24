@@ -181,6 +181,12 @@ What note_v1 adds:
   jobs API, and the web UI's Repetition slider. It scales the reference guidance:
   0 = ignore the reference, 0.5 = the learned amount, 1 = twice as strong. Unset
   (`None`, the default) is the learned behaviour, with no extra batch rows.
+- **`--light-style`** (WS8b phase 2): also `[generate] light_style`, `light_style` in the
+  jobs API and the web UI's "Light style" menu. With a `light_v2` checkpoint it picks the
+  lighting style (`auto`, `none`, `pulse`, `calm`, `scenes`, `flash`, `accent`), and
+  `ModelLightingGenerator` adds a section scene plan and light references. The pipeline
+  then also computes chroma for a light-only model. v1 checkpoints ignore it. See
+  [LIGHTING_V2.md](LIGHTING_V2.md) §5.
 - **Lighting**: from note_v1's lighting decoder (L1), through WS8's renderers with the
   rest pose and capped sweeps, and the L0 fallback. The note track it follows now gets
   the checkpoint's prefix layout. Before, a note_v0 checkpoint would have been handed

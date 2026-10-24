@@ -293,3 +293,24 @@ python checkpoints/note_v1/code/control.py start    # resume from last.pt, with 
 tree), and `watchdog.pid` the watchdog. `stop` writes a `STOP` file so the watchdog does
 not restart the run. A pause loses at most the steps since the last snapshot (1k steps
 early on, 2k later; about 8–16 min).
+
+## light_v2: style token and scene plan (WS8b phase 2)
+
+A lights-only fine-tune of note_v1 (`configs/light_v2.yaml`). The design and the data are
+in [LIGHTING_V2.md](LIGHTING_V2.md) §5. What it changes here:
+
+- **Light vocabulary v2** (532 tokens, appended to v1's 500): the light prompt
+  `LSTYLE LEVEL PAL FLIPS`, plus `REF` / `REF_END` for light reference blocks.
+  `light_version_for_vocab(cfg.light_vocab)` selects the prompt layout. `LightSampler`
+  takes `prompts`, `ref_fn` and `style_guidance`, and a v1 lighting decoder ignores them.
+- **Fine-tuning** in the trainer:
+  - `run.init_from` loads a checkpoint's weights into a fresh run; grown vocabularies
+    keep their old rows (`models.checkpoint.load_weights`);
+  - `run.freeze` freezes top-level modules: they get no gradient, and run in eval mode
+    and, for the encoder, under `no_grad`;
+  - with `train_notes: false`, `best.pt` is chosen on val light loss.
+- **Checkpoints** carry `light_styles`, the style model the run was trained with.
+  `load_model` puts it on `model.light_styles`.
+- **Data:** `LightWindows(light_version=2, styles=...)` adds the style label, the
+  window's scene and the light reference, each with its own dropout. With
+  `light_labelled_only`, it only uses maps that have a style label.

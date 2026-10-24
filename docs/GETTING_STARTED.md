@@ -48,6 +48,7 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 | `--reaction-time` | Seconds from spawn to strike (current: Expert 0.80, Expert+ 0.70). | `--reaction-time Expert+=0.75` |
 | `--njs` | Note jump speed. | `--njs Expert+=17` |
 | `--lighting` | `v3` (default; works unmodded), `vanilla`, or `chroma` (needs the Chroma mod). | `--lighting vanilla` |
+| `--light-style` | The look of the model's lights, with a `light_v2` checkpoint: `auto` (picked for the song; another seed may pick another), `pulse`, `calm`, `scenes`, `flash`, `accent`, or `none` (the model's own choice). | `--light-style calm` |
 | `--lighting-source` | `model` or `rules`. If the model's lights are too jittery for a song, `rules` gives a calmer, simpler show. | `--lighting-source rules` |
 | `--seed` | A different seed gives a different map for the same song. | `--seed 7` |
 | `--environment` | The Info.dat environment. | `--environment EDMEnvironment` |
@@ -99,6 +100,7 @@ it. For example:
 [generate]
 intensity = 0.8
 # repetition = 0.5
+# light_style = "auto"   # or pulse, calm, scenes, flash, accent, none (light_v2 checkpoints)
 # arcs = false     # true: arcs in every difficulty; false: none; unset: from Hard up
 # chains = false   # the same for chains (unset: from Expert up)
 # custom_levels = 'C:\Program Files (x86)\Steam\steamapps\common\Beat Saber\Beat Saber_Data\CustomLevels'
