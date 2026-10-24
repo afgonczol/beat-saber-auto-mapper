@@ -324,10 +324,10 @@ Seed 0, intensity 0.8, Standard. Each cell is NPS / arcs per minute / chains per
   consecutive swings of one hand, like human arcs.
 - Per difficulty, 0–12 arcs were re-anchored and 0–5 arcs or chains dropped.
 - Arc counts vary a lot between songs and seeds (1.3 to 46 a minute above).
-- Expert came out 0.4–1.2 NPS denser than before. Part of that is sampling noise: all
-  difficulties of a mode share one random stream, and the same Expert request gave 4.72
-  and 5.08 NPS on Stronger in two runs that differed only in Hard's flags. One seed can't
-  tell whether arcs themselves make maps denser.
+- Expert came out 0.4–1.2 NPS denser than before in this table. That is sampling noise,
+  not the arcs: all difficulties of a mode share one random stream, so a change to Hard's
+  flags changes Expert too. Expert alone, decoded with seeds 1–3 on the three songs, averages
+  4.53 NPS with arcs and chains off and 4.51 with them on.
 
 ## One Saber, 90° and 360°
 
