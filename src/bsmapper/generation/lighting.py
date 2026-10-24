@@ -7,6 +7,13 @@ lightshow goes through WS8's ``render``, the same path the L0 rules take: v3 gro
 lighting (with its rest pose and capped laser sweeps), Chroma (section palettes from the
 L0 planner) or vanilla. ``light_with_fallback`` uses the L0 rules when the model fails
 or its lightshow is too sparse to be a show.
+
+Readability limits (``lighting.readability``) apply as a post-filter on the decoded
+events (holds, colour holds, moment caps, motion gaps). The decode-time mask
+(``ReadabilityMask``) is opt-in (``ReadabilityConfig.decode_mask``). Section
+intensities from the L0 planner set how much change each section allows. Loud 16-beat
+windows the model leaves dark get the L0 rule lightshow's light events.
+``readability=None`` turns all of this off.
 """
 
 from __future__ import annotations
@@ -16,6 +23,13 @@ from typing import TYPE_CHECKING
 
 from bsmapper.generation.model import song_features
 from bsmapper.interfaces import AudioAnalysis, LightingStyle
+from bsmapper.lighting.readability import (
+    IntensityAt,
+    ReadabilityConfig,
+    ReadabilityMask,
+    limit_lightshow,
+    section_intensity,
+)
 from bsmapper.schema import Beatmap, Characteristic, Difficulty, DifficultyMap, Lightshow
 from bsmapper.tokenizer import (
     Conditioning,
@@ -26,12 +40,14 @@ from bsmapper.tokenizer import (
 )
 
 if TYPE_CHECKING:
+    from bsmapper.lighting.rules import RuleLightshow
     from bsmapper.models import MapperModel
 
 log = logging.getLogger(__name__)
 
 MIN_EVENTS_PER_BAR = 0.5  # sparser than this and the L0 rules take over
 LIGHT_TYPES = range(5)  # back, ring, left, right, centre lights
+DEFAULT_READABILITY = ReadabilityConfig()
 
 
 def lead_difficulty(beatmap: Beatmap) -> DifficultyMap | None:
@@ -57,6 +73,7 @@ class ModelLightingGenerator:
         top_p: float = 0.95,
         seed: int = 0,
         max_body_tokens: int = 1024,
+        readability: ReadabilityConfig | None = DEFAULT_READABILITY,
     ) -> None:
         if not model.cfg.has_lighting:
             raise ValueError("this checkpoint has no lighting decoder")
@@ -64,9 +81,13 @@ class ModelLightingGenerator:
         self.time_offset_s = time_offset_s
         self.temperature, self.top_p, self.seed = temperature, top_p, seed
         self.max_body_tokens = max_body_tokens
+        self.readability = readability
 
     def basic_lightshow(self, analysis: AudioAnalysis, beatmap: Beatmap) -> Lightshow:
-        """The decoded vanilla lightshow (before rendering)."""
+        """The decoded vanilla lightshow (before rendering and the readability post-filter).
+
+        With ``readability.decode_mask``, the decoder runs under ``ReadabilityMask``.
+        """
         from bsmapper.models import LightSampler, SamplingOptions
 
         feats = song_features(analysis, beatmap, self.time_offset_s)
@@ -89,8 +110,22 @@ class ModelLightingGenerator:
             seed=self.seed,
             max_body_tokens=self.max_body_tokens,
         )
-        windows = LightSampler(self.model).generate(feats, note_windows[:n_windows], options)
+        mask = None
+        if self.readability is not None and self.readability.decode_mask:
+            intensity_at = self.intensity_at(analysis, beatmap)
+            mask = ReadabilityMask(beatmap.beat_to_seconds, intensity_at, self.readability)
+        windows = LightSampler(self.model).generate(
+            feats, note_windows[:n_windows], options, mask_fn=mask
+        )
         return LightingTokenizer().decode(windows)
+
+    def intensity_at(self, analysis: AudioAnalysis, beatmap: Beatmap) -> IntensityAt:
+        """Section intensity per map beat, from the L0 planner's sections."""
+        from bsmapper.lighting import RuleLightingGenerator
+
+        return _intensity(
+            RuleLightingGenerator(time_offset_s=self.time_offset_s).plan(analysis, beatmap)
+        )
 
     def generate(
         self, analysis: AudioAnalysis, beatmap: Beatmap, style: LightingStyle
@@ -100,10 +135,24 @@ class ModelLightingGenerator:
 
         basic = self.basic_lightshow(analysis, beatmap)
         check_density(basic, beatmap, analysis.duration_s + self.time_offset_s)
-        # Section plans (palettes, boosts) come from the L0 planner; events from the model.
+        # Section plans (palettes, boosts, intensities) come from the L0 planner; events
+        # from the model.
         sections = RuleLightingGenerator(time_offset_s=self.time_offset_s).plan(analysis, beatmap)
+        if self.readability is not None:
+            basic, report = limit_lightshow(
+                basic,
+                beatmap.beat_to_seconds,
+                _intensity(sections),
+                self.readability,
+                fallback=sections.lightshow,
+            )
+            log.info("readability filter: %s", report.summary())
         plan = RuleLightshow(basic, sections.sections, sections.end_beat)
         return render(plan, style, beatmap.environment)
+
+
+def _intensity(plan: RuleLightshow) -> IntensityAt:
+    return section_intensity([s.start for s in plan.sections], [s.intensity for s in plan.sections])
 
 
 class SparseLightshowError(ValueError):
