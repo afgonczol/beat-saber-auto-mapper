@@ -5,8 +5,13 @@
 3. ``fix_with_rules``: replay the map through ``bsmapper.rules`` in time order. An
    object that breaks a hard ("error") rule is repaired when a nearby allowed variant
    exists (notes: another direction, then another cell; rotations: a smaller turn),
-   otherwise dropped. After this the checker reports no errors.
-4. NJS and start-beat offset from ``njs.JUMP_TABLE`` (NJS and reaction time can be
+   otherwise dropped.
+4. ``fix_spans``: re-anchor arcs and chains on the notes left after step 3. An arc joins a
+   note to the next note of the same hand; a chain starts on a note and runs along its cut.
+   Ends that miss a note are moved onto the nearest note at that time (an arc tail onto
+   the hand's next note), and what cannot be fixed is dropped (``bsmapper.rules.spans``).
+   After this the checker reports no errors.
+5. NJS and start-beat offset from ``njs.JUMP_TABLE`` (NJS and reaction time can be
    overridden).
 """
 
@@ -18,7 +23,8 @@ from dataclasses import dataclass, field
 
 from bsmapper.generation.njs import njs_and_offset
 from bsmapper.interfaces import Issue
-from bsmapper.rules import MapState, RuleChecker, ordered_objects
+from bsmapper.rules import MapState, RuleChecker, RulesConfig, ordered_objects
+from bsmapper.rules.spans import NoteIndex, arc_problem, chain_problem, tick
 from bsmapper.schema import (
     GRID_COLUMNS,
     GRID_ROWS,
@@ -159,9 +165,11 @@ def _repair(obj, state: MapState):
             if state.allowed(variant):
                 return variant
     elif isinstance(obj, RotationEvent) and abs(obj.degrees) > 15:
-        smaller = dataclasses.replace(obj, degrees=15 if obj.degrees > 0 else -15)
-        if state.allowed(smaller):
-            return smaller
+        sign = 1 if obj.degrees > 0 else -1
+        for degrees in range(abs(obj.degrees) - 15, 0, -15):  # the largest allowed turn
+            smaller = dataclasses.replace(obj, degrees=sign * degrees)
+            if state.allowed(smaller):
+                return smaller
     return None
 
 
@@ -198,6 +206,89 @@ def fix_with_rules(
     return out, repaired, dropped
 
 
+def _nearest(notes: list[Note], x: int, y: int) -> Note | None:
+    return min(notes, key=lambda n: (abs(n.x - x) + abs(n.y - y), n.y, n.x), default=None)
+
+
+def _end_direction(note: Note, own: CutDirection) -> CutDirection:
+    """An arc end takes its note's direction; on a dot note it keeps its own."""
+    return own if note.direction == CutDirection.ANY else note.direction
+
+
+def _anchor_arc(arc: Arc, index: NoteIndex) -> Arc | None:
+    """``arc`` moved onto a note at its head time and the hand's next note, or None."""
+    head = _nearest(index.notes(arc.beat, arc.color), arc.x, arc.y)
+    nxt = index.next_tick(arc.color, arc.beat)
+    if head is None or nxt is None:
+        return None
+    tail_beat = nxt / 24
+    tail = _nearest(index.notes(tail_beat, arc.color), arc.tail_x, arc.tail_y)
+    if tail is None:
+        return None
+    return dataclasses.replace(
+        arc,
+        x=head.x,
+        y=head.y,
+        direction=_end_direction(head, arc.direction),
+        tail_beat=tail.beat,
+        tail_x=tail.x,
+        tail_y=tail.y,
+        tail_direction=_end_direction(tail, arc.tail_direction),
+    )
+
+
+def _anchor_chain(chain: Chain, index: NoteIndex) -> Chain | None:
+    """``chain`` moved (head and tail together) onto an arrow note at its head time."""
+    arrows = [n for n in index.notes(chain.beat, chain.color) if n.direction != CutDirection.ANY]
+    head = _nearest(arrows, chain.x, chain.y)
+    if head is None:
+        return None
+    dx, dy = head.x - chain.x, head.y - chain.y
+    tail_x, tail_y = chain.tail_x + dx, chain.tail_y + dy
+    if not (0 <= tail_x < GRID_COLUMNS and 0 <= tail_y < GRID_ROWS):
+        return None
+    return dataclasses.replace(
+        chain, x=head.x, y=head.y, direction=head.direction, tail_x=tail_x, tail_y=tail_y
+    )
+
+
+def fix_spans(
+    dmap: DifficultyMap, beatmap: Beatmap, config: RulesConfig
+) -> tuple[DifficultyMap, Counter[str], Counter[str]]:
+    """Re-anchor or drop arcs and chains that break a span rule. Returns (map, repaired,
+    dropped). At most one arc and one chain start on each note."""
+    index = NoteIndex(dmap.notes)
+    repaired: Counter[str] = Counter()
+    dropped: Counter[str] = Counter()
+
+    def keep(objs, problem, anchor):
+        out, heads = [], set()
+        for obj in sorted(objs, key=lambda o: o.beat):
+            issue = problem(obj)
+            if issue is not None:
+                fixed = anchor(obj, index)
+                if fixed is None or problem(fixed) is not None:
+                    dropped[issue[0]] += 1
+                    continue
+                repaired[issue[0]] += 1
+                obj = fixed
+            head = (tick(obj.beat), obj.color, obj.x, obj.y)
+            if head in heads:
+                dropped["duplicate"] += 1
+                continue
+            heads.add(head)
+            out.append(obj)
+        return out
+
+    arcs = keep(
+        dmap.arcs,
+        lambda a: arc_problem(a, index, beatmap, config, dmap.obstacles),
+        _anchor_arc,
+    )
+    chains = keep(dmap.chains, lambda c: chain_problem(c, index, config), _anchor_chain)
+    return dataclasses.replace(dmap, arcs=arcs, chains=chains), repaired, dropped
+
+
 def postprocess(
     dmap: DifficultyMap,
     beatmap: Beatmap,
@@ -216,5 +307,8 @@ def postprocess(
         deduped.difficulty, beatmap.bpm, njs, reaction_s
     )
     fixed, report.repaired, report.dropped = fix_with_rules(deduped, beatmap, checker)
+    fixed, span_repaired, span_dropped = fix_spans(fixed, beatmap, checker.config(fixed))
+    report.repaired += span_repaired
+    report.dropped += span_dropped
     report.issues = checker.check(fixed, beatmap)
     return fixed, report

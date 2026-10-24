@@ -121,6 +121,22 @@ def test_intensity_option_and_config_default(fake_pipeline, tmp_path: Path) -> N
     assert runner.invoke(cli.app, [*args, "--intensity", "2"]).exit_code != 0
 
 
+def test_arcs_and_chains_options_and_config(fake_pipeline, tmp_path: Path) -> None:
+    song = tmp_path / "s.mp3"
+    song.write_bytes(b"x")
+    args = ["generate", str(song), "--out", str(tmp_path / "out"), "--no-zip"]
+    args += ["--difficulties", "Hard"]
+    result = runner.invoke(cli.app, args)
+    assert "Arcs: on from Hard, chains: on from Expert" in result.output
+    (tmp_path / "config.toml").write_text("[generate]\narcs = false\n", encoding="utf-8")
+    result = runner.invoke(cli.app, args)
+    assert "Arcs: off, chains: on from Expert" in result.output
+    result = runner.invoke(cli.app, [*args, "--arcs", "--no-chains"])
+    assert "Arcs: on, chains: off" in result.output
+    (tmp_path / "config.toml").write_text("[generate]\narcs = 1\n", encoding="utf-8")
+    assert runner.invoke(cli.app, args).exit_code != 0
+
+
 def test_chroma_warning(fake_pipeline, tmp_path: Path) -> None:
     song = tmp_path / "s.mp3"
     song.write_bytes(b"x")

@@ -811,6 +811,38 @@
             "title": "Repetition",
             "description": "Pattern reuse on repeated music: 0 = never, 0.5 = learned, 1 = twice as strongly; omit for the configured default."
           },
+          "arcs": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "true",
+                  "false"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arcs",
+            "description": "Arcs on or off; omit for the configured default (else Hard up)."
+          },
+          "chains": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "true",
+                  "false"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chains",
+            "description": "Chains on or off; omit for the configured default (else Expert up)."
+          },
           "njs": {
             "anyOf": [
               {
@@ -1394,6 +1426,30 @@
             ],
             "title": "Repetition",
             "description": "How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = the learned amount, 1 = twice as strongly; null = the configured default."
+          },
+          "arcs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arcs",
+            "description": "Arcs on or off in every difficulty; null = the configured default (else from Hard up)."
+          },
+          "chains": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chains",
+            "description": "Chains on or off in every difficulty; null = the configured default (else from Expert up)."
           },
           "njs": {
             "anyOf": [

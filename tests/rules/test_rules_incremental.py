@@ -7,6 +7,7 @@ import pytest
 
 from bsmapper.formats import read_map_report
 from bsmapper.rules import MapState, RuleChecker, ordered_objects
+from bsmapper.rules.spans import SPAN_RULES
 from bsmapper.schema import (
     GRID_COLUMNS,
     GRID_ROWS,
@@ -130,7 +131,8 @@ def test_checker_equals_incremental_replay(name):
         replay = []
         for obj in ordered_objects(dmap):
             replay += state.add(obj)
-        full = checker.check(dmap, beatmap)
+        # Arc and chain rules look forward, so only the whole-map check has them.
+        full = [i for i in checker.check(dmap, beatmap) if i.rule not in SPAN_RULES]
         assert set(full) <= set(replay)
         assert {i.rule for i in full} == {i.rule for i in replay}
 

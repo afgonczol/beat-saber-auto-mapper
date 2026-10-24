@@ -19,6 +19,11 @@ rules are hard constraints (decode masks), **warning** rules are only reported.
 | `dodge_gap` | error | Less than 150 ms between dodge walls that need the head in different places (left, right, crouch) |
 | `rotation_whiplash` | error | 360/90: total rotation swing above 90° within 1 s |
 | `rotation_range` | error | 90Degree: cumulative rotation beyond ±45° |
+| `rotation_step` | error | 360/90: a single rotation event over 60°. In 74k events of human 90/360 maps, none turns 75° or more, and 0.4–1% turn 60° |
+| `arc_anchor` | warning | An arc whose head or tail is not on a note of its colour in that cell, with the same direction (a dot note fits any) |
+| `arc_span` | warning | An arc whose tail is not after its head, that is longer than 3 s, or that skips a note of its hand |
+| `arc_wall` | warning | An arc whose path (a straight line between its ends) runs through a wall |
+| `chain_anchor` | error | A chain that does not start on a note with its direction, is longer than half a beat, has links that don't move along the cut, or skips a note of its hand |
 
 ## Parity model
 
@@ -37,6 +42,26 @@ of the opposite direction. On top of that:
 
 The checker tracks the *set* of parities each hand could be in, so it only reports a break
 when no reading of the map avoids one.
+
+## Arcs and chains
+
+The span rules (`rules.spans`) look forward, since an arc's tail sits on a later note. So
+they run over the whole map in `RuleChecker.check`, after the incremental rules, and are
+not part of `MapState` or the decode masks. Generation repairs every span issue afterwards,
+warnings included (`generation.postprocess.fix_spans`). The arc rules are warnings
+because arcs are never hit, so a stray arc can't cause a miss; as errors they would put
+modern human maps at 1.04 errors per 100 notes instead of 0.13. They are calibrated on 10,381 arcs and 1,381 chains
+in 118 human v3 difficulties:
+
+- 94% of human arcs pass every check. The rest are arc tails in empty air (5%), arcs
+  through walls (1.7%, partly because the straight-line path ignores the arc's curve), and
+  arcs longer than 3 s (0.5%).
+- 46% of human arcs cross the centre cells, so arcs are not vision blocks.
+- Human chains are at most a quarter beat long (two thirds are instant, length 0), and
+  their links run along the cut.
+
+The dataset build (`data.build`) leaves these rules out of its error filter, so datasets
+v0 and v1 keep their meaning.
 
 ## Thresholds
 

@@ -113,8 +113,14 @@ def generate(
     device: str | None = typer.Option(None, help="cuda or cpu; default cuda when available."),
     bombs: bool | None = typer.Option(None, "--bombs/--no-bombs", help="Default: per difficulty."),
     walls: bool | None = typer.Option(None, "--walls/--no-walls", help="Default: on."),
-    arcs: bool | None = typer.Option(None, "--arcs/--no-arcs", help="Default: per difficulty."),
-    chains: bool | None = typer.Option(None, "--chains/--no-chains", help="Default: per mode."),
+    arcs: bool | None = typer.Option(
+        None, "--arcs/--no-arcs", help="Default: [generate] arcs in the config, else Hard and up."
+    ),
+    chains: bool | None = typer.Option(
+        None,
+        "--chains/--no-chains",
+        help="Default: [generate] chains in the config, else Expert and up.",
+    ),
     tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -131,6 +137,7 @@ def generate(
         load_config,
         make_pipeline,
     )
+    from bsmapper.generation.density import configured_objects
     from bsmapper.generation.install import config_path
     from bsmapper.generation.intensity import (
         clamp_intensity,
@@ -162,6 +169,7 @@ def generate(
             intensity = configured_intensity()
         if repetition is None:
             repetition = configured_repetition()
+        objects = configured_objects()
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
@@ -178,10 +186,10 @@ def generate(
         jump_defaults=jump_defaults,
         environment=environment,
         lighting_source=lighting_source,
-        bombs=bombs,
-        walls=walls,
-        arcs=arcs,
-        chains=chains,
+        bombs=objects.get("bombs") if bombs is None else bombs,
+        walls=objects.get("walls") if walls is None else walls,
+        arcs=objects.get("arcs") if arcs is None else arcs,
+        chains=objects.get("chains") if chains is None else chains,
     )
     try:
         pipeline = make_pipeline(generator, lighting_source, model, device, tracker=tracker)
@@ -192,6 +200,11 @@ def generate(
     typer.echo(f"Notes: {source}" + (f" ({setup.reason})" if setup.reason else ""))
     rep = "learned" if repetition is None else f"{repetition:.2f}"
     typer.echo(f"Intensity: {clamp_intensity(intensity):.2f}, repetition: {rep}")
+    arcs_from, chains_from = "on from Hard", "on from Expert"
+    onoff = {True: "on", False: "off"}
+    typer.echo(
+        f"Arcs: {onoff.get(opts.arcs, arcs_from)}, chains: {onoff.get(opts.chains, chains_from)}"
+    )
     game = load_config()
     if lighting == "chroma" and not game.chroma_installed():
         typer.secho(

@@ -105,6 +105,12 @@ class ModelSettings:
     # Conditioning NPS = wanted x gain per difficulty; None = calibrated per model version
     # (``density.gains_for``).
     nps_gain: dict | None = None
+    # Logit offset on the ARC head token where arcs are allowed (#12): about e**bias times
+    # the odds of an arc, and more in the end, since arcs in the context beget arcs. On
+    # Stronger, Toxic and a trap song (Hard to Expert+), 0 gave a median of 10 arcs a minute
+    # (0 to 18), 0.3 gave 20 (1 to 46) and 0.7 gave 53 (10 to 96). Human maps that use arcs
+    # have a median of 13 to 18 and a p75 of 23 to 29. 0 = the model's own rate.
+    arc_bias: float = 0.3
 
 
 def song_features(
@@ -466,6 +472,7 @@ class ModelGenerator:
             context_events=s.context_events,
             max_body_tokens=s.max_body_tokens,
             repetition_guidance=repetition_guidance(repetition),
+            token_bias=((_V.arc, s.arc_bias),) if s.arc_bias else (),
         )
         conds = [
             Conditioning.from_request(replace(r, difficulty=d))
