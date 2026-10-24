@@ -63,9 +63,6 @@ export function App() {
           <span className="cube blue" />
           bsmapper
         </a>
-        <span className="badge" title="The ML pipeline is not wired in yet; maps are canned.">
-          mock pipeline
-        </span>
         {jobId && (
           <button className="ghost new" onClick={() => open(null)}>
             New song

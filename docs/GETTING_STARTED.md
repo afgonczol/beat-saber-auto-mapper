@@ -75,11 +75,15 @@ bsmapper generate "song.mp3" --lighting-source rules --install
 
 ## 3. Or use the web UI
 
+The easiest way: **double-click `bsmapper-web.cmd`** in the repo folder (or pin a shortcut to
+it). It starts the server and opens <http://127.0.0.1:8765> in your browser after a few
+seconds. Close its window to stop the server. From a terminal, the same thing is:
+
 ```powershell
 bsmapper serve
 ```
 
-Then open <http://127.0.0.1:8765>:
+In the page:
 1. Drop in a song.
 2. Pick difficulties, modes, lighting, intensity, style, repetition, arcs and chains.
 3. Watch the progress.
@@ -87,8 +91,16 @@ Then open <http://127.0.0.1:8765>:
 5. Click **Download** or **Install to game**. You can regenerate a single difficulty with
    a new seed.
 
+A full song with all five Standard difficulties takes about a minute and a half on the 3090.
 The UI is already built (`web\dist`). After pulling web changes, rebuild it with
 `cd web; npm install; npm run build`.
+
+The beat tracker `beat_this` gives a better beat grid than the librosa fallback. It is not
+in the pip extras (it installs from GitHub). If generation logs say it fell back to librosa:
+
+```powershell
+pip install "beat-this @ https://github.com/CPJKU/beat_this/archive/main.zip"
+```
 
 ## 4. Your settings file
 
