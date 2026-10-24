@@ -37,6 +37,9 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   // Intensity; "default" = the server's configured default.
   const [useIntensity, setUseIntensity] = useState(false);
   const [intensity, setIntensity] = useState(0.8);
+  // Pattern reuse on repeated music; "learned" = what the model learned from human maps.
+  const [useRepetition, setUseRepetition] = useState(false);
+  const [repetition, setRepetition] = useState(0.5);
   const [njs, setNjs] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +62,7 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
       lighting,
       style: useStyle ? style : null,
       intensity: useIntensity ? intensity : null,
+      repetition: useRepetition ? repetition : null,
       seed,
       reaction_time: reactionTime === "" ? null : Number(reactionTime),
       njs: njs === "" ? null : Number(njs),
@@ -207,6 +211,32 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
             />
             <span>Hardest</span>
             <output>{useIntensity ? intensity.toFixed(2) : "—"}</output>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>
+            Repetition
+            <label className="inline-toggle">
+              <input type="checkbox" checked={!useRepetition} onChange={() => setUseRepetition(!useRepetition)} />
+              learned
+            </label>
+          </legend>
+          <div className={`style-slider ${useRepetition ? "" : "disabled"}`}>
+            <span>Varied</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={repetition}
+              disabled={!useRepetition}
+              onChange={(e) => setRepetition(Number(e.target.value))}
+              aria-label="Pattern reuse on repeated music"
+              title="How strongly a repeated chorus reuses the earlier patterns; 0.5 = as learned"
+            />
+            <span>Repeated</span>
+            <output>{useRepetition ? repetition.toFixed(2) : "—"}</output>
           </div>
         </fieldset>
 

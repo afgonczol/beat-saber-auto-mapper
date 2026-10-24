@@ -797,6 +797,20 @@
             "title": "Intensity",
             "description": "0.5 = typical human map, 1 = about the hardest 10%; omit for the configured default."
           },
+          "repetition": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition",
+            "description": "Pattern reuse on repeated music: 0 = never, 0.5 = learned, 1 = twice as strongly; omit for the configured default."
+          },
           "njs": {
             "anyOf": [
               {
@@ -1366,6 +1380,20 @@
             ],
             "title": "Intensity",
             "description": "Challenge within each difficulty: 0.5 = typical human map, 1 = about the hardest 10%; null = the server's configured default."
+          },
+          "repetition": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition",
+            "description": "How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = the learned amount, 1 = twice as strongly; null = the configured default."
           },
           "njs": {
             "anyOf": [

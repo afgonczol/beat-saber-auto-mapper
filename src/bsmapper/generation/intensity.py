@@ -116,7 +116,12 @@ def plan(
     return IntensityPlan(label, level, q, wanted, harder(label) if shift else label)
 
 
-def conditioning_cap(condition_as: Difficulty, characteristic: Characteristic, bpm: float) -> float:
+def conditioning_cap(
+    condition_as: Difficulty,
+    characteristic: Characteristic,
+    bpm: float,
+    gains: dict[Difficulty, float] | None = None,
+) -> float:
     """Highest NPS to condition the model on above intensity 0.75: the human p95 for
     ``condition_as`` at ``bpm``, times its conditioning gain. Above that v0 saw too few maps
     and its output gets erratic (at intensity 1.0 the boosted copy sometimes came out
@@ -124,7 +129,7 @@ def conditioning_cap(condition_as: Difficulty, characteristic: Characteristic, b
     from bsmapper.generation.density import NPS_GAIN
 
     p95 = target_nps(condition_as, characteristic, bpm) * nps_ratio(condition_as, 0.95)
-    return round(p95 * NPS_GAIN[condition_as], 2)
+    return round(p95 * (gains or NPS_GAIN)[condition_as], 2)
 
 
 def relaxed_rules(config: RulesConfig, label: Difficulty, intensity: float | None) -> RulesConfig:
@@ -163,17 +168,27 @@ def checker_for(base: RuleChecker, intensity: float | None) -> RuleChecker:
     return IntensityChecker(base, intensity)
 
 
-def configured_intensity(path: Path | None = None) -> float | None:
-    """``[generate] intensity`` from ``~/.bsmapper/config.toml``, if set."""
+def configured_generate(key: str, path: Path | None = None) -> float | None:
+    """A 0..1 value from the ``[generate]`` table of ``~/.bsmapper/config.toml``, if set."""
     from bsmapper.generation.install import config_path
 
     cfg = path or config_path()
     if not cfg.is_file():
         return None
     with cfg.open("rb") as f:
-        value = tomllib.load(f).get("generate", {}).get("intensity")
+        value = tomllib.load(f).get("generate", {}).get(key)
     if value is None:
         return None
     if not 0.0 <= float(value) <= 1.0:
-        raise ValueError(f"{cfg}: [generate] intensity must be between 0 and 1")
+        raise ValueError(f"{cfg}: [generate] {key} must be between 0 and 1")
     return float(value)
+
+
+def configured_intensity(path: Path | None = None) -> float | None:
+    """``[generate] intensity`` from ``~/.bsmapper/config.toml``, if set."""
+    return configured_generate("intensity", path)
+
+
+def configured_repetition(path: Path | None = None) -> float | None:
+    """``[generate] repetition`` from ``~/.bsmapper/config.toml``, if set."""
+    return configured_generate("repetition", path)

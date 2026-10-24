@@ -43,6 +43,13 @@ class JobOptions(BaseModel):
         description="Challenge within each difficulty: 0.5 = typical human map, 1 = about the "
         "hardest 10%; null = the server's configured default.",
     )
+    repetition: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="How much repeated music reuses earlier patterns (note_v1): 0 = never, "
+        "0.5 = the learned amount, 1 = twice as strongly; null = the configured default.",
+    )
     njs: float | None = Field(
         default=None, ge=1.0, le=40.0, description="NJS for every difficulty; null = defaults."
     )

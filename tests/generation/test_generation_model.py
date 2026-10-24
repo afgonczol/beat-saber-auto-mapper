@@ -244,3 +244,77 @@ def test_high_intensity_conditions_on_the_next_difficulty(tiny_model, analysis) 
     assert p.condition_as == Difficulty.EXPERT_PLUS and p.wanted_nps > 0
     fixed, report = postprocess(dmap, tempo_beatmap(analysis))
     assert report.errors == []
+
+
+def repeating_analysis(duration: float = 48.0):
+    """A synthetic song whose second half repeats the first (chroma, mel, onsets)."""
+    a = make_analysis(duration=duration)
+    n = len(a.features["rms"])
+    rng = np.random.default_rng(0)
+    half = n // 2
+    pattern = rng.random((half, 12)).astype(np.float32)
+    chroma = np.concatenate([pattern, pattern, pattern[: n - 2 * half]])
+    a.features["chroma"] = chroma
+    mel = a.features["mel"].copy()
+    mel[half : 2 * half] = mel[:half]
+    a.features["mel"] = mel
+    return a
+
+
+def test_reference_windows_from_self_similarity(tiny_model) -> None:
+    from bsmapper.generation.model import reference_starts
+
+    a = repeating_analysis()
+    beatmap = tempo_beatmap(a)
+    refs = reference_starts(a, beatmap, song_features(a, beatmap))
+    assert refs is not None and len(refs) == 6
+    assert (refs >= 0).any()  # the repeated half finds the first one
+    assert all(r < k * 384 for k, r in enumerate(refs) if r >= 0)  # only earlier spans
+    assert reference_starts(make_analysis(), beatmap, song_features(a, beatmap)) is None
+
+
+def test_v1_decodes_with_references_and_repetition(tiny_model) -> None:
+    gen = ModelGenerator(tiny_model, FAST)
+    assert gen.version == 2 and gen.needs_chroma and gen.shifts_intensity
+    a = repeating_analysis()
+    (dmap,) = gen.generate_many(a, [req(Difficulty.EXPERT, intensity=0.8, repetition=1.0)])
+    assert dmap.difficulty == Difficulty.EXPERT
+    assert gen.last_refs is not None
+    fixed, report = postprocess(dmap, tempo_beatmap(a))
+    assert report.errors == []
+    off = ModelGenerator(tiny_model, ModelSettings(max_body_tokens=48, references=False))
+    assert not off.needs_chroma
+    off.generate_many(a, [req(Difficulty.EXPERT)])
+    assert off.last_refs is None
+
+
+def test_lighting_prefix_follows_the_checkpoint_version(analysis) -> None:
+    from bsmapper.tokenizer.vocab import NOTE_VOCAB_SIZES
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(
+        d_model=32, n_heads=4, ff_mult=2, dropout=0.0, encoder_layers=1, decoder_layers=1,
+        light_layers=1, note_memory_layers=1, max_len=192, light_max_len=192,
+        note_memory_len=128, note_vocab=NOTE_VOCAB_SIZES[1],
+    )  # fmt: skip
+    v0_sized = MapperModel(cfg).eval()
+    assert ModelGenerator(v0_sized).version == 1
+    beatmap = tempo_beatmap(analysis)
+    beatmap.difficulties.append(DifficultyMap(Characteristic.STANDARD, Difficulty.EXPERT))
+    gen = ModelLightingGenerator(v0_sized, max_body_tokens=24)
+    lights = gen.basic_lightshow(analysis, beatmap)  # would index past v0's vocabulary before
+    assert isinstance(lights, Lightshow)
+
+
+def test_note_v1_is_the_default_checkpoint(tmp_path, monkeypatch) -> None:
+    from bsmapper.generation.runtime import DEFAULT_CHECKPOINTS, find_checkpoint
+
+    monkeypatch.setattr(runtime_mod, "REPO_ROOT", tmp_path / "repo")
+    monkeypatch.chdir(tmp_path)
+    for d in DEFAULT_CHECKPOINTS:
+        (tmp_path / d).parent.mkdir(parents=True)
+        (tmp_path / d).write_bytes(b"x")
+    assert find_checkpoint() == tmp_path / DEFAULT_CHECKPOINTS[0]
+    assert "note_v1" in str(DEFAULT_CHECKPOINTS[0])
+    (tmp_path / DEFAULT_CHECKPOINTS[0]).unlink()
+    assert find_checkpoint() == tmp_path / DEFAULT_CHECKPOINTS[1]

@@ -144,6 +144,15 @@ def _api(manager: JobManager) -> APIRouter:
                 "configured default.",
             ),
         ] = None,
+        repetition: Annotated[
+            float | None,
+            Form(
+                ge=0.0,
+                le=1.0,
+                description="Pattern reuse on repeated music: 0 = never, 0.5 = learned, 1 = "
+                "twice as strongly; omit for the configured default.",
+            ),
+        ] = None,
         njs: Annotated[
             float | None,
             Form(ge=1.0, le=40.0, description="NJS for every difficulty; omit for defaults."),
@@ -166,6 +175,7 @@ def _api(manager: JobManager) -> APIRouter:
             style=style,
             seed=seed,
             intensity=intensity,
+            repetition=repetition,
             njs=njs,
             reaction_time=reaction_time,
         )

@@ -9,10 +9,11 @@ module adds what generation needs on top:
 
 - **conditioning**: ``Conditioning.from_request``. ``target_nps`` is the NPS wanted in
   the map; when it is None it comes from ``intensity.plan`` (the human NPS percentile for
-  the request's intensity). The model is conditioned on it times ``density.NPS_GAIN``,
-  since v0 undershoots its conditioning. Above intensity 0.75 a label is conditioned on
-  the next difficulty's DIFF token (``intensity``), and its rules ceilings are relaxed to
-  match (``intensity.checker_for``).
+  the request's intensity). The model is conditioned on it times a per-model gain
+  (``density.gains_for``): v0 undershoots its conditioning, v1 follows it closely. The
+  intensity goes into note_v1's INTENSITY token. Above 0.75 a label is also conditioned
+  on the next difficulty's DIFF token, with its rules ceilings relaxed to match
+  (``intensity``, ``ModelSettings.intensity_shift``); note_v0 has only the shift.
 - **density feedback**: every difficulty is decoded next to a copy conditioned on a
   higher NPS (``ModelSettings.density_boosts``). After each window the candidate that best
   fits the window's expected note count (wanted NPS x the music's loudness there) and
@@ -43,6 +44,7 @@ from bsmapper.generation.density import (
     GAP_LIMIT_BEATS,
     Loudness,
     conditioning_nps,
+    gains_for,
     loud_gaps,
 )
 from bsmapper.generation.intensity import SHIFT_ABOVE, checker_for, conditioning_cap
@@ -92,6 +94,17 @@ class ModelSettings:
     density_boosts: tuple[float, ...] = (1.6,)
     # A boosted window must beat the base one's score by this much to be kept.
     boost_margin: float = 0.05
+    # Above intensity 0.75, also condition a label on the next difficulty's DIFF token (#32).
+    # Re-checked for note_v1, which has an INTENSITY token: at 0.8, the token alone left
+    # Expert at 0.82-1.33x the human median on three songs, the token plus the shift at
+    # 0.95-1.33x, with no rule errors either way. So it stays on for both models.
+    # None = on for every model.
+    intensity_shift: bool | None = None
+    # Structure memory (note_v1): reference windows from the song's self-similarity.
+    references: bool = True
+    # Conditioning NPS = wanted x gain per difficulty; None = calibrated per model version
+    # (``density.gains_for``).
+    nps_gain: dict | None = None
 
 
 def song_features(
@@ -349,6 +362,23 @@ class ModelGenerator:
         # Per request of the last generate_many: (windows from a boosted candidate, windows).
         self.last_boosted: list[tuple[int, int]] = []
         self.last_plans: list = []  # intensity.IntensityPlan per request of the last call
+        self.last_refs: np.ndarray | None = None  # reference start ticks of the last call
+
+    @property
+    def version(self) -> int:
+        """Tokenizer version of the checkpoint (1 = note_v0, 2 = note_v1)."""
+        from bsmapper.tokenizer import version_for_vocab
+
+        return version_for_vocab(self.model.cfg.note_vocab)
+
+    @property
+    def shifts_intensity(self) -> bool:
+        return self.settings.intensity_shift is not False
+
+    @property
+    def needs_chroma(self) -> bool:
+        """Does this model use the structure memory (so the pipeline adds chroma)?"""
+        return self.version >= 2 and self.settings.references
 
     def generate(self, analysis: AudioAnalysis, request: GenerationRequest) -> DifficultyMap:
         return self.generate_many(analysis, [request])[0]
@@ -357,25 +387,24 @@ class ModelGenerator:
         self, analysis: AudioAnalysis, requests: Sequence[GenerationRequest]
     ) -> list[DifficultyMap]:
         beatmap = tempo_beatmap(analysis)
-        plans = [
-            intensity_plan(r.difficulty, r.characteristic, beatmap.bpm, r.intensity)
-            for r in requests
-        ]
+        plans = [self._plan(r, beatmap.bpm) for r in requests]
         requests = [
             r if r.target_nps is not None else replace(r, target_nps=p.wanted_nps)
             for r, p in zip(requests, plans, strict=True)
         ]
         self.last_plans = plans
-        groups: dict[tuple[int, float], list[int]] = {}
+        groups: dict[tuple, list[int]] = {}
         for i, r in enumerate(requests):
-            groups.setdefault((r.seed, r.temperature), []).append(i)
+            groups.setdefault((r.seed, r.temperature, r.repetition), []).append(i)
         feats = song_features(analysis, beatmap)
+        refs = reference_starts(analysis, beatmap, feats) if self.needs_chroma else None
+        self.last_refs = refs
         out: list[DifficultyMap | None] = [None] * len(requests)
         self.last_masked_steps = 0
         self.last_boosted = [(0, 0)] * len(requests)
-        for (seed, temperature), idx in groups.items():
+        for (seed, temperature, repetition), idx in groups.items():
             dmaps, boosted = self._decode(
-                feats, beatmap, [requests[i] for i in idx], seed, temperature
+                feats, beatmap, [requests[i] for i in idx], seed, temperature, refs, repetition
             )
             for i, dmap, b in zip(idx, dmaps, boosted, strict=True):
                 out[i], self.last_boosted[i] = dmap, b
@@ -388,22 +417,26 @@ class ModelGenerator:
         requests: list[GenerationRequest],
         seed: int,
         temperature: float,
+        refs: np.ndarray | None = None,
+        repetition: float | None = None,
     ) -> tuple[list[DifficultyMap], list[tuple[int, int]]]:
-        from bsmapper.models import NoteSampler, SamplingOptions
+        from bsmapper.models import NoteSampler, SamplingOptions, WindowRefs
+        from bsmapper.models.sampling import repetition_guidance
 
         s = self.settings
+        gains = s.nps_gain or gains_for(self.version)
         rows: list[GenerationRequest] = []  # every candidate, base first per request
         conds_as: list[Difficulty] = []  # the DIFF token each row is conditioned on
         groups: list[list[int]] = []
         for r in requests:
-            as_ = intensity_plan(r.difficulty, r.characteristic, beatmap.bpm, r.intensity)
+            as_ = self._plan(r, beatmap.bpm)
             cond_diff = as_.condition_as
             # Above 0.75 the targets reach the top NPS buckets; keep the boosted copy within
             # what human maps of that difficulty do (intensity 0.5 is left as in #31).
             cap = math.inf
             if as_.intensity > SHIFT_ABOVE:
-                cap = conditioning_cap(cond_diff, r.characteristic, beatmap.bpm)
-            base = min(conditioning_nps(cond_diff, r.target_nps or 0.0), cap)
+                cap = conditioning_cap(cond_diff, r.characteristic, beatmap.bpm, gains)
+            base = min(conditioning_nps(cond_diff, r.target_nps or 0.0, gains), cap)
             factors = (1.0, *s.density_boosts) if r.target_nps else (1.0,)
             groups.append(list(range(len(rows), len(rows) + len(factors))))
             rows += [replace(r, target_nps=round(min(base * f, cap), 2)) for f in factors]
@@ -412,7 +445,9 @@ class ModelGenerator:
         for r in rows:  # NJS / reaction time follow the label
             njs, offset = njs_and_offset(r.difficulty, beatmap.bpm, r.njs)
             metas.append(DifficultyMap(r.characteristic, r.difficulty, njs=njs, njs_offset=offset))
-        checkers = [checker_for(self.checker, r.intensity) for r in rows]
+        # Relaxed ceilings only where a label is decoded as the next difficulty.
+        shift = self.shifts_intensity
+        checkers = [checker_for(self.checker, r.intensity) if shift else self.checker for r in rows]
         masker = RuleMasker(rows, metas, beatmap, checkers, rules=s.rule_masks)
         feedback = DensityFeedback(
             masker,
@@ -430,6 +465,7 @@ class ModelGenerator:
             style_guidance=s.style_guidance,
             context_events=s.context_events,
             max_body_tokens=s.max_body_tokens,
+            repetition_guidance=repetition_guidance(repetition),
         )
         conds = [
             Conditioning.from_request(replace(r, difficulty=d))
@@ -438,6 +474,8 @@ class ModelGenerator:
         n_windows = max(1, math.ceil(feats.shape[0] / WINDOW_TICKS))
         sampler = NoteSampler(self.model)
         callbacks = {"mask_fn": masker.mask, "on_window": feedback.on_window}
+        if refs is not None:
+            callbacks["ref_fn"] = WindowRefs(refs)
         windows = sampler.generate(feats, conds, options, n_windows=n_windows, **callbacks)
         self.last_masked_steps += masker.masked_steps
         dmaps = []
@@ -448,6 +486,47 @@ class ModelGenerator:
             dmaps.append(replace(decoded, difficulty=meta.difficulty))
         boosted = [(n, feedback.windows) for n in feedback.boosted]  # type: ignore[union-attr]
         return dmaps, boosted
+
+    def _plan(self, request: GenerationRequest, bpm: float):
+        return intensity_plan(
+            request.difficulty,
+            request.characteristic,
+            bpm,
+            request.intensity,
+            model_intensity=not self.shifts_intensity,
+        )
+
+
+def chroma_frames(audio_path, frame_rate: float, n_frames: int) -> np.ndarray:
+    """(n_frames, 12) chroma of an audio file at the analysis frame rate (for the
+    structure memory), computed as the dataset build does (``data.structure``)."""
+    from bsmapper.audio.decode import load_audio
+    from bsmapper.audio.features import FeatureConfig
+    from bsmapper.data.structure import CHROMA_HOP, frame_chroma
+
+    sr = FeatureConfig().sr
+    chroma = frame_chroma(load_audio(audio_path, sr), sr)
+    if len(chroma) == 0:
+        return np.zeros((n_frames, 12), dtype=np.float32)
+    idx = np.floor(np.arange(n_frames) / frame_rate * sr / CHROMA_HOP).astype(np.int64)
+    return chroma[np.clip(idx, 0, len(chroma) - 1)].astype(np.float32)
+
+
+def reference_starts(
+    analysis: AudioAnalysis, beatmap: Beatmap, feats: np.ndarray
+) -> np.ndarray | None:
+    """Reference start tick per window (-1 = none), or None without a chroma feature."""
+    chroma = analysis.features.get("chroma")
+    if chroma is None or len(chroma) < 2:
+        return None
+    from bsmapper.data.structure import find_references, per_beat_mean, structure_features
+
+    n_windows = feats.shape[0] // WINDOW_TICKS
+    n_beats = n_windows * 16
+    beat_s = np.vectorize(beatmap.beat_to_seconds)
+    beats = per_beat_mean(chroma, analysis.frame_rate, beat_s, n_beats)
+    refs = find_references(structure_features(feats, beats), n_windows)
+    return refs.kept()
 
 
 def describe(model: Any) -> str:
