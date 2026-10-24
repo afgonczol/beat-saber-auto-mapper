@@ -217,6 +217,13 @@ def test_rotation_whiplash():
     assert rules_of(rotations=steady, characteristic=Characteristic.DEGREE_360) == set()
 
 
+def test_rotation_step():
+    rots = [RotationEvent(0, 90)]
+    assert "rotation_step" in rules_of(rotations=rots, characteristic=Characteristic.DEGREE_360)
+    rots = [RotationEvent(0, 60), RotationEvent(4, -45)]
+    assert rules_of(rotations=rots, characteristic=Characteristic.DEGREE_360) == set()
+
+
 def test_rotation_range_only_on_90_degree():
     turns = [RotationEvent(0, 30), RotationEvent(4, 30)]
     assert "rotation_range" in rules_of(rotations=turns, characteristic=Characteristic.DEGREE_90)

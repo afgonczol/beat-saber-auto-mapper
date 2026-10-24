@@ -29,6 +29,10 @@ def errors(d: DifficultyMap) -> list:
     return [i for i in RuleChecker().check(d, beatmap()) if i.severity == "error"]
 
 
+def issues(d: DifficultyMap) -> list:
+    return RuleChecker().check(d, beatmap())
+
+
 def test_snap_and_dedupe() -> None:
     m = dmap(
         Note(4.0004, 1, 0, R, D),
@@ -62,13 +66,21 @@ def test_unfixable_objects_are_dropped() -> None:
 
 
 def test_rotation_whiplash_is_softened() -> None:
-    rots = [RotationEvent(4.0, 90), RotationEvent(4.5, -105)]  # 105° back within 0.25 s
+    # +60, -60, -45 within 0.375 s: a 105° swing. The largest allowed last turn is -30.
+    rots = [RotationEvent(4.0, 60), RotationEvent(4.5, -60), RotationEvent(4.75, -45)]
     m = dmap(mode=Characteristic.DEGREE_360, rotations=rots)
     assert errors(m)
     out, repaired, dropped = fix_with_rules(m, beatmap())
-    assert out.rotations == [RotationEvent(4.0, 90), RotationEvent(4.5, -15)]
+    assert out.rotations == [*rots[:2], RotationEvent(4.75, -30)]
     assert repaired == {"rotation_whiplash": 1} and not dropped
     assert errors(out) == []
+
+
+def test_rotation_step_is_shrunk() -> None:
+    m = dmap(mode=Characteristic.DEGREE_90, rotations=[RotationEvent(4.0, 90)])
+    out, repaired, _ = fix_with_rules(m, beatmap())
+    assert out.rotations == [RotationEvent(4.0, 45)]  # 60 would leave 90°'s ±45° range
+    assert repaired == {"rotation_step": 1}
 
 
 def test_postprocess_sets_njs_from_table() -> None:
@@ -130,11 +142,11 @@ def test_arc_tail_in_the_air_moves_to_the_hands_next_note() -> None:
     # Tail at 4.5 (no note) and in the wrong cell; it should land on the 5.0 note.
     arc = Arc(4, R, 1, 0, D, 4.5, 1, 1, UP)
     m = _spans(*notes, arcs=[arc])
-    assert errors(m)
+    assert [i.rule for i in issues(m)] == ["arc_anchor"]
     out, repaired, dropped = fix_spans(m, beatmap(), RuleChecker().config(m))
     assert out.arcs == [Arc(4, R, 1, 0, D, 5.0, 0, 1, UP)]
     assert repaired == {"arc_anchor": 1} and not dropped
-    assert errors(out) == []
+    assert issues(out) == []
 
 
 def test_arc_skipping_a_note_is_shortened_and_head_snaps_to_its_note() -> None:
@@ -166,7 +178,7 @@ def test_unanchorable_spans_and_duplicates_are_dropped() -> None:
     out, _, dropped = fix_spans(m, beatmap(), RuleChecker().config(m))
     assert out.arcs == twice[:1] and out.chains == [good]
     assert dropped == {"arc_anchor": 2, "duplicate": 1, "chain_anchor": 1}
-    assert errors(out) == []
+    assert issues(out) == []
 
 
 def test_chain_moves_with_its_head_note() -> None:
@@ -186,5 +198,5 @@ def test_postprocess_reports_span_repairs() -> None:
 
     notes = (Note(4, 1, 0, R, D), Note(5, 1, 1, R, UP))
     out, report = postprocess(_spans(*notes, arcs=[Arc(4, R, 1, 0, D, 4.5, 1, 1, UP)]), beatmap())
-    assert report.repaired == {"arc_anchor": 1} and report.errors == []
+    assert report.repaired == {"arc_anchor": 1} and report.issues == []
     assert out.arcs[0].tail_beat == 5.0

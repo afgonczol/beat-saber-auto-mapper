@@ -8,7 +8,7 @@ generator](#choosing-the-generator)):
 | --- | --- |
 | analyze | WS2 analysis. The song is padded with `BeatGrid.lead_in_s()` of silence so the bar before the first downbeat starts at 0 s (Beat Saber's beat 0). Map beat = grid beat + beats per bar. `timing.song_time_analysis` shifts the analysis the same way, so generators see `beat_times[i]` = map beat `i`. |
 | generate | Per mode, every difficulty in one batch (`ModelGenerator.generate_many`), or one `NoteGenerator.generate` call each. Then from the hardest down: a difficulty at 95% or more of the next harder one's NPS is generated again at 80% of it, so NPS strictly rises. |
-| rules | `postprocess`: snap to the 24-tick grid, dedupe, replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule, then set NJS and offset (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
+| rules | `postprocess`: snap to the 24-tick grid, dedupe, replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule. Then `fix_spans` re-anchors arcs and chains on the notes that are left (see [Arcs and chains](#arcs-and-chains)), and NJS and offset are set (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
 | lighting | Model lighting (L1) when there is a model, else the WS8 L0 rule lightshow. Both render through WS8 (`lighting.render`), v3 group lighting by default (WeaveEnvironment). Any model failure falls back to L0. |
 | package | WS1 `package_map`: padded `song.egg`, cover (embedded art or a placeholder), v3 difficulty files with a v2 Info.dat, zip. Title and artist come from the tags, else from an `Artist - Title` filename. |
 
@@ -69,10 +69,13 @@ loads it on its first job and keeps it for every later one.
     Both rows then continue from the chosen window, with its tokens as context and its
     rules state copied, so a resampled window joins seamlessly. This costs about
     30–50% more decoding time. `density_boosts=()` turns it off.
-  - **Object flags**: `density.object_flags` turns bombs, arcs and chains on only where
-    most human maps of that mode and difficulty use them. The flags tell the model "this
-    map uses X", so turning everything on makes every map use everything.
-    `--bombs/--walls/--arcs/--chains` (and their `--no-` forms) override this.
+  - **Object flags**: `density.object_flags` turns bombs on only where most human maps of
+    that mode and difficulty use them. The flags tell the model "this map uses X", so
+    turning everything on makes every map use everything. Arcs are on from Hard up and
+    chains from Expert up in every mode with arrows (see [Arcs and
+    chains](#arcs-and-chains)). `--bombs/--walls/--arcs/--chains` (and their `--no-`
+    forms) override this, and so do `bombs`, `walls`, `arcs` and `chains` in the
+    `[generate]` table of the config (true or false).
   - **Request mask**: forbidden object types, red notes in One Saber, arcs and chains in
     No Arrows, rotations outside 90/360.
   - **Rules mask** (`RuleMasker`, WS6's `mask_fn`): one `MapState` per sequence, fed each

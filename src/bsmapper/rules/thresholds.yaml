@@ -20,9 +20,12 @@ default:
     dodge_gap: error
     rotation_whiplash: error
     rotation_range: error
-    arc_anchor: error
-    arc_span: error
-    arc_wall: error
+    rotation_step: error
+    # Arcs are guides, never hit, so a stray one is not a miss; generation still repairs
+    # them (postprocess.fix_spans). As errors they would flag 1 in 20 human arcs.
+    arc_anchor: warning
+    arc_span: warning
+    arc_wall: warning
     chain_anchor: error
   parity:
     max_wrist_deg: 115
@@ -58,6 +61,7 @@ default:
     window_s: 1.0
     max_swing_deg: 90
     max_abs_deg: null
+    max_step_deg: 60
   spans:
     arc_max_s: 3.0
     chain_max_beats: 0.5

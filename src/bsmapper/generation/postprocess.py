@@ -165,9 +165,11 @@ def _repair(obj, state: MapState):
             if state.allowed(variant):
                 return variant
     elif isinstance(obj, RotationEvent) and abs(obj.degrees) > 15:
-        smaller = dataclasses.replace(obj, degrees=15 if obj.degrees > 0 else -15)
-        if state.allowed(smaller):
-            return smaller
+        sign = 1 if obj.degrees > 0 else -1
+        for degrees in range(abs(obj.degrees) - 15, 0, -15):  # the largest allowed turn
+            smaller = dataclasses.replace(obj, degrees=sign * degrees)
+            if state.allowed(smaller):
+                return smaller
     return None
 
 
