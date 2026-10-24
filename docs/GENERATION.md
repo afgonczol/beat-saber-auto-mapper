@@ -285,6 +285,89 @@ came out at 4.18 NPS; in the run above it came out at 3.51, the same as at 0.5. 
 case is what the next-seed retry is for. Note timing is unchanged at every intensity:
 Expert 0.80 s, Expert+ 0.69 s.
 
+## Arcs and chains
+
+note_v1 learned arcs and chains from dataset v1 (118k arcs in 1,968 of 5,864 Standard Expert
+maps, 158k in 2,455 of 7,115 Expert+ maps). The old default turned an object type on only
+where at least 45% of human maps use it, and only about a third of Standard maps have arcs,
+so the ARCS flag was off and arcs were masked out (#12). Now:
+
+- **Defaults** (`density.SPANS_FROM`): arcs from Hard up and chains from Expert up, in
+  every mode with arrows. Below that, the human share still decides (One Saber Easy and
+  Normal keep arcs, since most human maps of those have them). `--arcs/--no-arcs`,
+  `--chains/--no-chains`, `[generate] arcs` / `chains` in the config and the web UI's
+  Arcs and Chains buttons override this.
+- **Repair** (`postprocess.fix_spans`). With the flag on, the model always starts an arc
+  on a note, but 3–37% of arc tails missed a note and up to 18% of arcs ran past a note of
+  the same hand. So after the rules pass, each arc is moved onto the note at its head time
+  and the hand's next note. A chain is moved with its head note. What can't be anchored
+  is dropped, and at most one arc and one chain start on each note. Afterwards every arc
+  and chain passes the span rules ([RULES.md](RULES.md#arcs-and-chains)).
+- **Density** (`ModelSettings.arc_bias`, 0.3): a logit offset on the ARC head token.
+  Without it, arcs came out at a median of 10 a minute (0 on the trap song's Expert+), below
+  human maps that use arcs (median 13–18, p75 23–29). With 0.3 the median is 20.
+
+Seed 0, intensity 0.8, Standard. Each cell is NPS / arcs per minute / chains per minute.
+"Before" is main (arcs and chains off). "After" is this branch's defaults. Rule errors are
+0 everywhere, and every arc and chain is anchored.
+
+| song | | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- |
+| Stronger, 104 BPM | before | 4.44 / 0 / 0 | 4.89 / 0 / 0 | 5.25 / 0 / 0 |
+| | after | 4.36 / 16.6 / 0 | 5.56 / 16.3 / 1.3 | 5.67 / 23.2 / 3.1 |
+| Toxic, 143 BPM | before | 4.14 / 0 / 0 | 4.62 / 0 / 0 | 5.01 / 0 / 0 |
+| | after | 3.78 / 23.4 / 0 | 5.06 / 20.3 / 1.8 | 5.45 / 45.8 / 1.2 |
+| trap, 82.5 BPM | before | 2.81 / 0 / 0 | 3.25 / 0 / 0 | 3.58 / 0 / 0 |
+| | after | 2.87 / 1.3 / 0 | 4.44 / 25.1 / 1.3 | 5.14 / 1.3 / 1.9 |
+
+- Arcs are 0.29–0.58 s long at the median (human: 0.51 s) and almost always join two
+  consecutive swings of one hand, like human arcs.
+- Per difficulty, 0–12 arcs were re-anchored and 0–5 arcs or chains dropped.
+- Arc counts vary a lot between songs and seeds (1.3 to 46 a minute above).
+- Expert came out 0.4–1.2 NPS denser than before. Part of that is sampling noise: all
+  difficulties of a mode share one random stream, and the same Expert request gave 4.72
+  and 5.08 NPS on Stronger in two runs that differed only in Hard's flags. One seed can't
+  tell whether arcs themselves make maps denser.
+
+## One Saber, 90° and 360°
+
+note_v1 is conditioned on the characteristic, so these modes come from the same model with
+no fine-tuning. The request mask keeps One Saber to blue notes (arcs and chains included)
+and allows rotations only in 90/360. The rules add `rotation_whiplash`, `rotation_range`
+(90°: within ±45°) and `rotation_step`. The step rule was added because note_v1 made a single
+90° snap on Stronger 90° Expert+ ([RULES.md](RULES.md)).
+
+Seed 0, intensity 0.8, this branch's defaults. Each cell is NPS / arcs per minute /
+rotations per minute. There are 0 rule errors in every cell, and warnings are at most 0.4
+per 100 notes, except for one difficulty (below).
+
+| mode | song | Hard | Expert | Expert+ |
+| --- | --- | --- | --- | --- |
+| One Saber | Stronger | 3.20 / 22.6 / – | 4.08 / 30.0 / – | 3.78 / 35.1 / – |
+| | Toxic | 2.69 / 29.6 / – | 3.31 / 18.0 / – | 3.76 / 34.5 / – |
+| 90° | Stronger | 3.62 / 4.4 / 24 | 4.93 / 9.5 / 34 | 5.21 / 5.7 / 35 |
+| | Toxic | 3.49 / 25.0 / 31 | 4.06 / 22.0 / 35 | 4.63 / 16.2 / 43 |
+| 360° | Stronger | 4.08 / 5.6 / 35 | 4.98 / 22.2 / 34 | 5.60 / 18.8 / 40 |
+| | Toxic | 3.65 / 29.2 / 54 | 4.08 / 13.1 / 42 | 4.60 / 12.2 / 41 |
+| human median | One Saber | 2.38 | 3.12 | 3.71 |
+| | 90° | 2.68 / – / 46 | 3.31 / – / 54 | 4.73 / – / 78 |
+| | 360° | 2.89 / – / 50 | 3.72 / – / 65 | 4.08 / – / 63 |
+
+- **One Saber**: every note, arc and chain is blue.
+- **Rotation**: steps are 15° or 30°, never closer than 0.05 s, and there is no whiplash.
+  - 90° stays within ±45° and ends within 45° of the start.
+  - 360° wanders over 375–555° in all (human maps: median 360°, p90 about 700°), with net
+    turns up to 525° (human p90: 370–650°).
+  - Walls are active across a rotation 0–30 times per difficulty. Human maps do this too:
+    35–61% of them have some, with a p90 of 11–34.
+  - Rotations come a bit less often than in human maps (24–54 a minute against 46–78).
+- **Density**: in every mode, Stronger comes out denser than human maps of that mode (above
+  their p75 on Hard and Expert), as it does in Standard. Toxic lands at 0.98–1.3× the
+  human median, about what intensity 0.8 asks for.
+- **Walls**: Stronger 90° Hard has 236 zero-length walls in the outer lanes (34.7
+  `wall_duration` warnings per 100 notes). These are snapped "flick" walls, which 16% of
+  human difficulties also have.
+
 ## NJS and offset
 
 The offset brings the reaction time (half jump duration in seconds, as the game computes

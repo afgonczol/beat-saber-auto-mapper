@@ -75,6 +75,9 @@ class SamplingOptions:
     repetition_guidance: float = 1.0
     context_events: int = 16
     max_body_tokens: int = 1024
+    # (token id, logit offset) added before sampling, e.g. to make arcs more likely; a
+    # bias of b multiplies a token's odds by about e**b wherever the grammar allows it.
+    token_bias: tuple[tuple[int, float], ...] = ()
 
 
 @dataclass(slots=True)
@@ -212,6 +215,8 @@ class _WindowDecoder:
             if lg.shape[1] < self.vocab_size:  # an older checkpoint: newer tokens never sampled
                 pad = np.full((n, self.vocab_size - lg.shape[1]), -np.inf, dtype=lg.dtype)
                 lg = np.concatenate([lg, pad], axis=1)
+            for token, offset in opts.token_bias:
+                lg[:, token] += offset
             chosen = np.full(n, PAD, dtype=np.int64)
             for b in sorted(active):
                 parser, body = parsers[b], bodies[b]

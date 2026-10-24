@@ -61,6 +61,19 @@ unmodded unless the test needs Chroma.
   rest pose and 30° sweep cap should hold).
 - [ ] Nothing stays stuck in a blocking position after a drop.
 
+### 9. Arcs and chains (Hard and up)
+- [ ] Arcs join two swings of the same hand and follow the cut you make anyway; none starts
+  or ends in empty air.
+- [ ] There are enough to notice, but not on every note (human maps: about 15–25 a minute).
+- [ ] Chains (Expert and up) start on a note and their links follow the cut.
+
+### 10. One Saber, 90° and 360°
+- [ ] One Saber: only blue notes, and the patterns fit one hand (no rushed back-and-forth).
+- [ ] 90°/360°: turns come with the music, never snap the track around in one go, and give
+  time to look before the next notes.
+- [ ] 90° stays in front of you (within about 45° either way).
+- [ ] Walls don't appear in a lane right as the track turns into it.
+
 ## Afterwards
 
 Add one row to the playtest log in [PLAN.md](PLAN.md) (§6, "Playtest log"):
