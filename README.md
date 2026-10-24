@@ -1,9 +1,9 @@
 # bsmapper: Beat Saber auto mapper
 
-> **Status: early development.** `bsmapper generate` makes playable maps end to end from the
-> first trained model (`checkpoints/note_v0`, not published), or from a placeholder stub
-> generator without one. See [docs/PLAN.md](docs/PLAN.md) and
-> [docs/GENERATION.md](docs/GENERATION.md).
+> **Status: early but usable.** `bsmapper generate` makes playable maps with the trained
+> note_v1 model (weights are local in `checkpoints/`, not published). **New here? Start with
+> [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).** See also [docs/PLAN.md](docs/PLAN.md)
+> and [docs/GENERATION.md](docs/GENERATION.md).
 
 bsmapper turns any song into a playable Beat Saber map using a transformer trained on curated
 community maps:
