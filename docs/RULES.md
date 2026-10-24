@@ -17,6 +17,7 @@ rules are hard constraints (decode masks), **warning** rules are only reported.
 | `nps_ceiling` | error | Notes/s over a 2 s window above the difficulty's ceiling (Easy 6 … Expert+ 20); reported once per dense passage |
 | `wall_duration` | warning | Walls shorter than 13.8 ms |
 | `dodge_gap` | error | Less than 150 ms between dodge walls that need the head in different places (left, right, crouch) |
+| `wall_boxin` | error | Head-height walls of any length that close both centre columns (lean left and lean right) less than 300 ms apart, or one standing wall over both centre columns |
 | `rotation_whiplash` | error | 360/90: total rotation swing above 90° within 1 s |
 | `rotation_range` | error | 90Degree: cumulative rotation beyond ±45° |
 | `rotation_step` | error | 360/90: a single rotation event over 60°. In 74k events of human 90/360 maps, none turns 75° or more, and 0.4–1% turn 60° |
@@ -42,6 +43,30 @@ of the opposite direction. On top of that:
 
 The checker tracks the *set* of parities each hand could be in, so it only reports a break
 when no reading of the map avoids one.
+
+## Walls
+
+`dodge_gap` leaves out walls shorter than 100 ms, which human maps use as flashes. Those
+short walls still close a column, though. A playtest of a generated Stronger Expert had an
+outer wall, then 1-tick walls in columns 2 and 1 within 145 ms, so no column was free.
+`wall_boxin` covers that case. It counts every standing wall that reaches head height,
+whatever its length, and flags one that closes the other centre column from the one a
+wall closed less than 300 ms earlier (or at the same time). When `dodge_gap` already
+flags a wall, `wall_boxin` doesn't report it again.
+
+Calibrated on 205,367 walls in 1,483 human Hard/Expert/Expert+ difficulties (800 maps):
+
+| Window | Human difficulties flagged |
+|---|---|
+| 0.15–0.2 s | 0 |
+| 0.3 s | 2 (0.1%), both Expert+ side-switch flashes |
+| 0.4 s | 23 (1.6%) |
+| 0.5 s | 58 (3.9%) |
+
+No human wall closes both centre columns on its own. Closing three or more of the four
+columns within 0.3 s is common (5.6% of human difficulties: corridors with a centre wall),
+so that is not a rule. Short centre walls are common too (23% of human difficulties), so
+they are not banned either. Generation drops the later wall of a box-in (`fix_with_rules`).
 
 ## Arcs and chains
 

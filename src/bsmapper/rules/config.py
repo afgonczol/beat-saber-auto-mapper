@@ -32,6 +32,7 @@ RULES = (
     "nps_ceiling",
     "wall_duration",
     "dodge_gap",
+    "wall_boxin",
     "rotation_whiplash",
     "rotation_range",
     "rotation_step",
@@ -113,6 +114,9 @@ class WallConfig:
     min_dodge_gap_s: float = 0.15
     # Shorter walls are flashes, not dodges, and are left out of the gap check.
     min_dodge_duration_s: float = 0.1
+    # Walls of any duration that close both centre columns at head height (left and
+    # right lean) closer than this together leave nowhere to stand.
+    boxin_window_s: float = 0.3
 
 
 @dataclass(frozen=True, slots=True)

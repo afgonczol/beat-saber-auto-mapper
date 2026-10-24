@@ -18,6 +18,7 @@ default:
     nps_ceiling: error
     wall_duration: warning
     dodge_gap: error
+    wall_boxin: error
     rotation_whiplash: error
     rotation_range: error
     rotation_step: error
@@ -57,6 +58,7 @@ default:
     min_duration_s: 0.0138
     min_dodge_gap_s: 0.15
     min_dodge_duration_s: 0.1
+    boxin_window_s: 0.3
   rotation:
     window_s: 1.0
     max_swing_deg: 90

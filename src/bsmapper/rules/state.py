@@ -51,6 +51,7 @@ FOREHAND, BACKHAND = "forehand", "backhand"
 BOTH = frozenset({FOREHAND, BACKHAND})
 _FLIP = {FOREHAND: BACKHAND, BACKHAND: FOREHAND}
 _HAND = {Color.RED: "left", Color.BLUE: "right"}
+_CENTRE = frozenset((1, 2))
 
 MapObject = Note | Bomb | Obstacle | Arc | Chain | RotationEvent
 
@@ -93,6 +94,7 @@ class _Wall:
     end_s: float
     end_beat: float
     dodge: frozenset[int] | str | None
+    lanes: frozenset[int]  # columns it closes at head height to a standing player
 
 
 def _dodge_key(o: Obstacle) -> frozenset[int] | str | None:
@@ -104,6 +106,13 @@ def _dodge_key(o: Obstacle) -> frozenset[int] | str | None:
     if not centre or o.y > 2 or o.y + o.height < 3:
         return None
     return "crouch" if o.y >= 2 else centre
+
+
+def _head_lanes(o: Obstacle) -> frozenset[int]:
+    """Columns a wall closes at head height to a standing player (any duration)."""
+    if o.width <= 0 or o.height <= 0 or o.duration <= 0 or o.y >= 2 or o.y + o.height < 3:
+        return frozenset()
+    return frozenset(c for c in range(GRID_COLUMNS) if o.x <= c < o.x + o.width)
 
 
 def _inside(o: Obstacle, x: int, y: int, beat: float) -> bool:
@@ -138,6 +147,7 @@ class MapState:
         self._bomb_s: list[float] = []
         self._walls: list[_Wall] = []  # walls that can still matter at last_beat
         self._dodge_walls: list[_Wall] = []
+        self._head_walls: list[_Wall] = []  # walls closing a centre column at head height
         self._rot_s: list[float] = []
         self._rot_total: list[float] = []
         self._swings: dict[Color, _Swing] = {}
@@ -186,6 +196,7 @@ class MapState:
             "_bomb_s",
             "_walls",
             "_dodge_walls",
+            "_head_walls",
             "_rot_s",
             "_rot_total",
         ):
@@ -266,6 +277,8 @@ class MapState:
         self._walls = [w for w in self._walls if w.end_beat >= now - EPS_BEAT]
         horizon = self.seconds(now) - self.config.walls.min_dodge_gap_s
         self._dodge_walls = [w for w in self._dodge_walls if w.end_s >= horizon]
+        horizon = self.seconds(now) - self.config.walls.boxin_window_s
+        self._head_walls = [w for w in self._head_walls if w.end_s >= horizon]
 
     # --- notes -------------------------------------------------------------------
 
@@ -584,7 +597,7 @@ class MapState:
         end_beat = o.beat + o.duration
         end_s = self.seconds(end_beat)
         dodge = _dodge_key(o) if end_s - t >= cfg.min_dodge_duration_s - 1e-9 else None
-        wall = _Wall(o, t, end_s, end_beat, dodge)
+        wall = _Wall(o, t, end_s, end_beat, dodge, _head_lanes(o))
         issues: list[Issue] = []
         visible = o.width > 0 and o.height > 0
         if visible and self._on("wall_duration") and wall.end_s - t < cfg.min_duration_s - 1e-9:
@@ -596,6 +609,7 @@ class MapState:
                     f"(min {cfg.min_duration_s * 1000:.0f} ms)",
                 )
             )
+        dodge_gap = False
         if wall.dodge is not None and self._on("dodge_gap"):
             for prev in self._dodge_walls:
                 gap = t - prev.end_s
@@ -608,7 +622,21 @@ class MapState:
                             f"(min {cfg.min_dodge_gap_s * 1000:.0f} ms)",
                         )
                     )
+                    dodge_gap = True
                     break
+        centre = wall.lanes & _CENTRE
+        if centre and not dodge_gap and self._on("wall_boxin"):
+            boxed = "wall closes both centre columns" if centre == _CENTRE else None
+            for prev in self._head_walls if boxed is None else ():
+                if t - prev.end_s < cfg.boxin_window_s - 1e-9 and prev.lanes & _CENTRE != centre:
+                    boxed = (
+                        f"walls close both centre columns within "
+                        f"{cfg.boxin_window_s * 1000:.0f} ms (with the wall from beat "
+                        f"{prev.obstacle.beat:g})"
+                    )
+                    break
+            if boxed:
+                issues.append(self._issue("wall_boxin", o.beat, boxed))
         if self._on("note_in_wall"):
             # Only notes at the wall's own start beat can already be placed.
             for note in reversed(self.notes):
@@ -629,6 +657,8 @@ class MapState:
                 self._walls.append(wall)
             if wall.dodge is not None:
                 self._dodge_walls.append(wall)
+            if wall.lanes & _CENTRE:
+                self._head_walls.append(wall)
 
         return issues, commit
 
