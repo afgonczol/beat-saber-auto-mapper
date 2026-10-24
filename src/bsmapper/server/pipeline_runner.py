@@ -23,6 +23,7 @@ from bsmapper.generation import (
     replace_difficulty,
     safe_folder_name,
 )
+from bsmapper.generation.density import configured_objects
 from bsmapper.generation.intensity import configured_intensity, configured_repetition
 from bsmapper.generation.pipeline import (
     MAX_NPS_RATIO,
@@ -46,6 +47,7 @@ def _options(options: JobOptions) -> GenerateOptions:
     if options.reaction_time is not None:
         override = JumpOverride(reaction_s=options.reaction_time)
         jump = {Difficulty.EXPERT: override, Difficulty.EXPERT_PLUS: override}
+    objects = configured_objects()
     return GenerateOptions(
         modes=list(options.modes),
         difficulties=list(options.difficulties),
@@ -59,6 +61,10 @@ def _options(options: JobOptions) -> GenerateOptions:
         njs=options.njs,
         jump=jump,
         jump_defaults=configured_jumps(),
+        bombs=objects.get("bombs"),
+        walls=objects.get("walls"),
+        arcs=options.arcs if options.arcs is not None else objects.get("arcs"),
+        chains=options.chains if options.chains is not None else objects.get("chains"),
     )
 
 

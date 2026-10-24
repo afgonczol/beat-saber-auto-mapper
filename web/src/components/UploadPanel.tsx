@@ -23,6 +23,36 @@ function toggle<T>(list: T[], item: T): T[] {
   return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
 }
 
+// Object types: null = the server's default (config, else arcs from Hard and chains from Expert).
+const TRISTATE: { value: boolean | null; label: string }[] = [
+  { value: null, label: "Default" },
+  { value: true, label: "On" },
+  { value: false, label: "Off" },
+];
+
+function TriState({
+  name,
+  value,
+  onChange,
+  hint,
+}: {
+  name: string;
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+  hint: string;
+}) {
+  return (
+    <div className="segmented" title={hint}>
+      {TRISTATE.map((t) => (
+        <label key={t.label} className={value === t.value ? "on" : ""}>
+          <input type="radio" name={name} checked={value === t.value} onChange={() => onChange(t.value)} />
+          {t.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -40,6 +70,8 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   // Pattern reuse on repeated music; "learned" = what the model learned from human maps.
   const [useRepetition, setUseRepetition] = useState(false);
   const [repetition, setRepetition] = useState(0.5);
+  const [arcs, setArcs] = useState<boolean | null>(null);
+  const [chains, setChains] = useState<boolean | null>(null);
   const [njs, setNjs] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +95,8 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
       style: useStyle ? style : null,
       intensity: useIntensity ? intensity : null,
       repetition: useRepetition ? repetition : null,
+      arcs,
+      chains,
       seed,
       reaction_time: reactionTime === "" ? null : Number(reactionTime),
       njs: njs === "" ? null : Number(njs),
@@ -238,6 +272,16 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
             <span>Repeated</span>
             <output>{useRepetition ? repetition.toFixed(2) : "—"}</output>
           </div>
+        </fieldset>
+
+        <fieldset className="row">
+          <legend>Arcs</legend>
+          <TriState name="arcs" value={arcs} onChange={setArcs} hint="Default: on from Hard up" />
+        </fieldset>
+
+        <fieldset className="row">
+          <legend>Chains</legend>
+          <TriState name="chains" value={chains} onChange={setChains} hint="Default: on from Expert up" />
         </fieldset>
 
         <fieldset className="row">

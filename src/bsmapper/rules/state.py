@@ -637,6 +637,14 @@ class MapState:
         t = self.seconds(ev.beat)
         total = (self._rot_total[-1] if self._rot_total else 0.0) + ev.degrees
         issues: list[Issue] = []
+        if self._on("rotation_step") and abs(ev.degrees) > cfg.max_step_deg + 1e-6:
+            issues.append(
+                self._issue(
+                    "rotation_step",
+                    ev.beat,
+                    f"one rotation of {ev.degrees:+d}° (max {cfg.max_step_deg:g}°)",
+                )
+            )
         if self._on("rotation_whiplash"):
             start = bisect.bisect_left(self._rot_s, t - cfg.window_s - 1e-9)
             window = [*self._rot_total[start:], total]

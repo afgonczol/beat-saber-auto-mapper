@@ -343,6 +343,16 @@ export interface components {
              */
             repetition?: number | null;
             /**
+             * Arcs
+             * @description Arcs on or off; omit for the configured default (else Hard up).
+             */
+            arcs?: ("true" | "false") | null;
+            /**
+             * Chains
+             * @description Chains on or off; omit for the configured default (else Expert up).
+             */
+            chains?: ("true" | "false") | null;
+            /**
              * Njs
              * @description NJS for every difficulty; omit for defaults.
              */
@@ -617,6 +627,16 @@ export interface components {
              * @description How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = the learned amount, 1 = twice as strongly; null = the configured default.
              */
             repetition?: number | null;
+            /**
+             * Arcs
+             * @description Arcs on or off in every difficulty; null = the configured default (else from Hard up).
+             */
+            arcs?: boolean | null;
+            /**
+             * Chains
+             * @description Chains on or off in every difficulty; null = the configured default (else from Expert up).
+             */
+            chains?: boolean | null;
             /**
              * Njs
              * @description NJS for every difficulty; null = defaults.

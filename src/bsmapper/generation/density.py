@@ -8,6 +8,9 @@ Standard, from the ratio of their medians. Values stay inside Standard's interqu
 
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
 import numpy as np
 
 from bsmapper.schema import Characteristic, Difficulty
@@ -109,8 +112,8 @@ def loud_gaps(beats: list[float], loudness: Loudness, limit: float) -> list[floa
 
 
 # Share of dataset v0 train difficulties that use each object type (bombs, arcs, chains;
-# walls are in about 90% everywhere). A type is on by default when at least ~45% of human
-# maps of that mode and difficulty use it: the conditioning flags mean "this map uses X".
+# walls are in about 90% everywhere). Bombs are on by default when at least ~45% of human
+# maps of that mode and difficulty use them: the conditioning flags mean "this map uses X".
 _USES = {
     # characteristic: {difficulty: (bombs, arcs, chains)}
     Characteristic.STANDARD: {
@@ -138,15 +141,58 @@ _USES = {
 _USES[Characteristic.DEGREE_90] = _USES[Characteristic.DEGREE_360]
 USE_THRESHOLD = 0.45
 
+# Arcs and chains are on by default from these difficulties up, whatever share of human maps
+# uses them (#12: a third of Standard Expert maps have arcs, so the share rule left them off).
+# note_v1 learned them from 118k arcs in Standard Expert alone, and post-processing
+# re-anchors or drops malformed ones (``postprocess.fix_spans``). With the flag on it places
+# 12-40 arcs a minute on Hard to Expert+, the range of human maps that use arcs (median
+# 13-18). Chains (fast bursts) start at Expert. Below these, the human share decides.
+SPANS_FROM: dict[Characteristic, tuple[Difficulty | None, Difficulty | None]] = {
+    # characteristic: (arcs from, chains from)
+    Characteristic.STANDARD: (Difficulty.HARD, Difficulty.EXPERT),
+    Characteristic.ONE_SABER: (Difficulty.HARD, Difficulty.EXPERT),
+    Characteristic.DEGREE_90: (Difficulty.HARD, Difficulty.EXPERT),
+    Characteristic.DEGREE_360: (Difficulty.HARD, Difficulty.EXPERT),
+}
+
+
+def _from(difficulty: Difficulty, lowest: Difficulty | None) -> bool:
+    return lowest is not None and difficulty.rank >= lowest.rank
+
 
 def object_flags(difficulty: Difficulty, characteristic: Characteristic) -> dict[str, bool]:
-    """Default ``GenerationRequest`` allow_* flags: what most human maps of this kind use."""
+    """Default ``GenerationRequest`` allow_* flags: bombs where most human maps of this
+    kind use them, arcs and chains from ``SPANS_FROM`` up (else where most maps use them)."""
     bombs, arcs, chains = _USES.get(characteristic, _USES[Characteristic.STANDARD])[difficulty]
+    arcs_from, chains_from = SPANS_FROM.get(characteristic, (None, None))
+    allow_arcs = arcs >= USE_THRESHOLD or _from(difficulty, arcs_from)
+    allow_chains = chains >= USE_THRESHOLD or _from(difficulty, chains_from)
     if characteristic == Characteristic.NO_ARROWS:
-        arcs = chains = 0.0
+        allow_arcs = allow_chains = False
     return {
         "allow_bombs": bombs >= USE_THRESHOLD,
         "allow_obstacles": True,
-        "allow_arcs": arcs >= USE_THRESHOLD,
-        "allow_chains": chains >= USE_THRESHOLD,
+        "allow_arcs": allow_arcs,
+        "allow_chains": allow_chains,
     }
+
+
+def configured_objects(path: Path | None = None) -> dict[str, bool]:
+    """``[generate] arcs`` / ``chains`` from ``~/.bsmapper/config.toml`` (only the keys set):
+    true turns the type on for every difficulty, false off; unset keeps ``object_flags``."""
+    from bsmapper.generation.install import config_path
+
+    cfg = path or config_path()
+    if not cfg.is_file():
+        return {}
+    with cfg.open("rb") as f:
+        table = tomllib.load(f).get("generate", {})
+    out = {}
+    for key in ("bombs", "walls", "arcs", "chains"):
+        value = table.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, bool):
+            raise ValueError(f"{cfg}: [generate] {key} must be true or false")
+        out[key] = value
+    return out

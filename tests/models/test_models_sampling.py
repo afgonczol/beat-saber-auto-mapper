@@ -119,6 +119,18 @@ def test_mask_fn_is_applied_and_sees_the_parser(model, features):
         NOTE_GRAMMAR.parse(w.body)
 
 
+def test_token_bias_makes_a_token_likelier(model, features):
+    arc = NOTE_VOCAB.id("ARC")
+    opts = SamplingOptions(seed=1, max_body_tokens=60)
+    (plain,) = NoteSampler(model).generate(features, COND, opts)
+    biased_opts = SamplingOptions(seed=1, max_body_tokens=60, token_bias=((arc, 20.0),))
+    (biased,) = NoteSampler(model).generate(features, COND, biased_opts)
+    count = lambda ws: sum(w.body.count(arc) for w in ws)  # noqa: E731
+    assert count(biased) > count(plain)
+    for w in biased:
+        NOTE_GRAMMAR.parse(w.body)
+
+
 def test_style_guidance_runs_and_changes_logits(model, features):
     plain = NoteSampler(model).generate(
         features, COND, SamplingOptions(temperature=0, max_body_tokens=40)

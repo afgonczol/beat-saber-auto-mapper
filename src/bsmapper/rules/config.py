@@ -34,6 +34,11 @@ RULES = (
     "dodge_gap",
     "rotation_whiplash",
     "rotation_range",
+    "rotation_step",
+    "arc_anchor",
+    "arc_span",
+    "arc_wall",
+    "chain_anchor",
 )
 
 
@@ -117,6 +122,16 @@ class RotationConfig:
     max_swing_deg: float = 90.0
     # Max |cumulative rotation|; null for no limit (360). 90Degree maps keep within 45.
     max_abs_deg: float | None = None
+    # Largest single rotation event. Human 90/360 maps never turn 75° or more at once.
+    max_step_deg: float = 60.0
+
+
+@dataclass(frozen=True, slots=True)
+class SpansConfig:
+    # Longest arc, head to tail (human p99 is 2.8 s).
+    arc_max_s: float = 3.0
+    # Longest chain, head to tail (human chains reach a quarter beat).
+    chain_max_beats: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +145,7 @@ class RulesConfig:
     density: DensityConfig = DensityConfig()
     walls: WallConfig = WallConfig()
     rotation: RotationConfig = RotationConfig()
+    spans: SpansConfig = SpansConfig()
 
     def enabled(self, rule: str) -> bool:
         return self.severity.get(rule, "error") != "off"
@@ -144,6 +160,7 @@ _SECTIONS = {
     "density": DensityConfig,
     "walls": WallConfig,
     "rotation": RotationConfig,
+    "spans": SpansConfig,
 }
 
 

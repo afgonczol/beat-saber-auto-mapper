@@ -8,6 +8,7 @@ from typing import Any
 
 from bsmapper.interfaces import Issue
 from bsmapper.rules.config import RulesConfig, config_for, load_raw
+from bsmapper.rules.spans import check_spans
 from bsmapper.rules.state import MapState, ordered_objects
 from bsmapper.schema import Beatmap, DifficultyMap
 
@@ -27,8 +28,9 @@ class RuleChecker:
 
     def check(self, dmap: DifficultyMap, beatmap: Beatmap) -> list[Issue]:
         state = self.state(dmap, beatmap)
-        issues = state.extend(ordered_objects(dmap))
-        return _collapse_density(issues, state)
+        issues = _collapse_density(state.extend(ordered_objects(dmap)), state)
+        spans = check_spans(dmap, beatmap, state.config)
+        return sorted(issues + spans, key=lambda i: i.beat) if spans else issues
 
 
 def _collapse_density(issues: list[Issue], state: MapState) -> list[Issue]:

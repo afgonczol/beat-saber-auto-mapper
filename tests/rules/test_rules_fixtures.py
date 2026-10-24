@@ -6,6 +6,7 @@ import pytest
 
 from bsmapper.formats import read_map_report
 from bsmapper.rules import RuleChecker
+from bsmapper.rules.config import load_raw
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "maps"
 GOOD = ["v2", "v2_modded", "v3", "v4"]
@@ -17,11 +18,18 @@ def checker():
 
 
 @pytest.mark.parametrize("name", GOOD)
-def test_good_fixtures_have_no_errors(checker, name):
+def test_good_fixtures_have_no_errors(name):
+    # The format fixtures' chains test the readers: their links run off the grid edge.
+    checker = RuleChecker(raw={**load_raw(), "default": _chains_off()})
     beatmap, _ = read_map_report(FIXTURES / name)
     for dmap in beatmap.difficulties:
         errors = [i for i in checker.check(dmap, beatmap) if i.severity == "error"]
         assert errors == [], f"{name} {dmap.characteristic}/{dmap.difficulty}: {errors}"
+
+
+def _chains_off() -> dict:
+    default = load_raw()["default"]
+    return {**default, "severity": {**default["severity"], "chain_anchor": "off"}}
 
 
 def _issues(checker, characteristic, difficulty):
