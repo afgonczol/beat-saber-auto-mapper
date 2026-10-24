@@ -66,7 +66,10 @@ pick a suitable environment instead.
   - *Transition*: a transition event.
   - A per-channel `wave` (beat distribution) ripples a hit across the group's lights.
 - **Ring spin** (type 8) turns the spin groups one full circle over 2 beats, then glides
-  them back to the rest pose. The direction alternates between spins.
+  them back to the rest pose. The direction alternates between spins. A turn always
+  takes the full 2 beats: spins and zooms that come while a turn is running are ignored.
+  Squeezing turns into the gap whipped the inner square round in a playtest of Stronger
+  (see [LIGHTING_V2.md](LIGHTING_V2.md)).
 - **Ring zoom** (type 9) briefly fans the spin groups' lights out (3× the spread), then
   glides them back to rest. If an environment handles type 9 natively (The Second), the
   zoom event is passed through instead.
@@ -153,6 +156,25 @@ orientation, with alternating red and blue notes every 2 beats. It then packages
 into `Beat Saber_Data/CustomLevels`. The script needs ffmpeg and the `audio` extra.
 `tests/lighting/test_lighting_mapfolder.py` builds the same map folder from a synthetic
 analysis and reads it back. Its slow test runs the script on `$BSMAPPER_DEMO_SONG`.
+
+## Readability limits (WS8b)
+
+`lighting.readability.limit_lightshow` bounds how fast a vanilla lightshow may change,
+scaled by section intensity:
+
+- per-channel minimum hold;
+- colour hold;
+- light-change moments per second;
+- spin, zoom and laser speed gaps;
+- boost toggle gaps.
+
+It keeps the most important moments first: downbeats, then beats, then half beats.
+`ReadabilityMask` is the decode-time counterpart for `LightSampler`. The model lighting
+(L1) runs both by default; the L0 rules don't need them.
+
+`lighting.metrics` measures a lightshow's readability: changes, colour flips, holds,
+strobes, pattern repetition and v3 rotation speed. [LIGHTING_V2.md](LIGHTING_V2.md) has the
+diagnosis, the human reference numbers and the design options for the next lighting model.
 
 ## Open points
 
