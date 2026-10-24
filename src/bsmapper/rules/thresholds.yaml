@@ -20,6 +20,10 @@ default:
     dodge_gap: error
     rotation_whiplash: error
     rotation_range: error
+    arc_anchor: error
+    arc_span: error
+    arc_wall: error
+    chain_anchor: error
   parity:
     max_wrist_deg: 115
     inward_bias_deg: 22.5
@@ -54,6 +58,9 @@ default:
     window_s: 1.0
     max_swing_deg: 90
     max_abs_deg: null
+  spans:
+    arc_max_s: 3.0
+    chain_max_beats: 0.5
 
 difficulties:
   # Calibrated on 79 human maps: NPS ceilings sit at or above the densest 2 s of those

@@ -34,6 +34,10 @@ RULES = (
     "dodge_gap",
     "rotation_whiplash",
     "rotation_range",
+    "arc_anchor",
+    "arc_span",
+    "arc_wall",
+    "chain_anchor",
 )
 
 
@@ -120,6 +124,14 @@ class RotationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SpansConfig:
+    # Longest arc, head to tail (human p99 is 2.8 s).
+    arc_max_s: float = 3.0
+    # Longest chain, head to tail (human chains reach a quarter beat).
+    chain_max_beats: float = 0.5
+
+
+@dataclass(frozen=True, slots=True)
 class RulesConfig:
     severity: dict[str, Severity] = field(default_factory=lambda: dict.fromkeys(RULES, "error"))
     parity: ParityConfig = ParityConfig()
@@ -130,6 +142,7 @@ class RulesConfig:
     density: DensityConfig = DensityConfig()
     walls: WallConfig = WallConfig()
     rotation: RotationConfig = RotationConfig()
+    spans: SpansConfig = SpansConfig()
 
     def enabled(self, rule: str) -> bool:
         return self.severity.get(rule, "error") != "off"
@@ -144,6 +157,7 @@ _SECTIONS = {
     "density": DensityConfig,
     "walls": WallConfig,
     "rotation": RotationConfig,
+    "spans": SpansConfig,
 }
 
 

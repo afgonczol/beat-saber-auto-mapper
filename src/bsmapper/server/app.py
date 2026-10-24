@@ -10,7 +10,7 @@ import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -153,6 +153,15 @@ def _api(manager: JobManager) -> APIRouter:
                 "twice as strongly; omit for the configured default.",
             ),
         ] = None,
+        # Text, not bool: FastAPI reads a missing optional bool form field as false.
+        arcs: Annotated[
+            Literal["true", "false"] | None,
+            Form(description="Arcs on or off; omit for the configured default (else Hard up)."),
+        ] = None,
+        chains: Annotated[
+            Literal["true", "false"] | None,
+            Form(description="Chains on or off; omit for the configured default (else Expert up)."),
+        ] = None,
         njs: Annotated[
             float | None,
             Form(ge=1.0, le=40.0, description="NJS for every difficulty; omit for defaults."),
@@ -176,6 +185,8 @@ def _api(manager: JobManager) -> APIRouter:
             seed=seed,
             intensity=intensity,
             repetition=repetition,
+            arcs=None if arcs is None else arcs == "true",
+            chains=None if chains is None else chains == "true",
             njs=njs,
             reaction_time=reaction_time,
         )

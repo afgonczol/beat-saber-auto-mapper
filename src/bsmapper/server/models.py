@@ -50,6 +50,16 @@ class JobOptions(BaseModel):
         description="How much repeated music reuses earlier patterns (note_v1): 0 = never, "
         "0.5 = the learned amount, 1 = twice as strongly; null = the configured default.",
     )
+    arcs: bool | None = Field(
+        default=None,
+        description="Arcs on or off in every difficulty; null = the configured default "
+        "(else from Hard up).",
+    )
+    chains: bool | None = Field(
+        default=None,
+        description="Chains on or off in every difficulty; null = the configured default "
+        "(else from Expert up).",
+    )
     njs: float | None = Field(
         default=None, ge=1.0, le=40.0, description="NJS for every difficulty; null = defaults."
     )

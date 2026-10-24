@@ -69,9 +69,13 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "seed": 7,
         "intensity": None,
         "repetition": None,
+        "arcs": None,
+        "chains": None,
         "njs": None,
         "reaction_time": None,
     }
+    info = upload(client, arcs="false", chains="true")
+    assert (info["options"]["arcs"], info["options"]["chains"]) == (False, True)
 
 
 def test_defaults_and_validation(client: TestClient) -> None:

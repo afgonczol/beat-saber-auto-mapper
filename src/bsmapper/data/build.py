@@ -154,12 +154,15 @@ def _difficulty(dmap: DifficultyMap, timing, checker) -> tuple[dict, DifficultyM
     from bsmapper.data.mapgrid import off_grid_ratio
     from bsmapper.data.tech import tech_features
     from bsmapper.rules import summarize
+    from bsmapper.rules.spans import SPAN_RULES
     from bsmapper.tokenizer import notes_per_second, snap_map
 
     snapped, rep = snap_map(dmap)
     hit_beats = np.array([o.beat for o in (*dmap.notes, *dmap.bombs)], dtype=np.float64)
     timing_map = timing.beatmap()
-    issues = checker.check(snapped, timing_map)
+    # The arc and chain rules (#12) are for generated maps; leave them out so the dataset
+    # filter stays what datasets v0 and v1 were built with.
+    issues = [i for i in checker.check(snapped, timing_map) if i.rule not in SPAN_RULES]
     errors = [i for i in issues if i.severity == "error"]
     per100 = max(len(snapped.notes), 1) / 100.0
     stats = {
