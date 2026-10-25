@@ -32,6 +32,8 @@ unmodded unless the test needs Chroma.
 ### 3. Vision blocks
 - [ ] No note hides behind a centre note or bomb right in front of you.
 - [ ] Walls never cover notes you have to hit.
+- [ ] There is always somewhere to stand: walls never close both centre lanes (lean left
+      and lean right) at once or in quick succession (`wall_boxin`).
 
 ### 4. Density and challenge, per difficulty
 - [ ] Each difficulty is clearly harder than the one below it.

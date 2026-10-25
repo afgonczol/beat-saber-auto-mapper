@@ -1,11 +1,12 @@
 """Post-processing every generated difficulty goes through, whatever the generator.
 
 1. ``snap_map``: every object onto the 24-ticks-per-beat grid and the value grids.
-2. ``dedupe``: drop exact duplicates and objects sharing a cell at the same time.
+2. ``dedupe``: drop exact duplicates and objects sharing a cell at the same time, and merge
+   walls that overlap in the same columns into one.
 3. ``fix_with_rules``: replay the map through ``bsmapper.rules`` in time order. An
    object that breaks a hard ("error") rule is repaired when a nearby allowed variant
    exists (notes: another direction, then another cell; rotations: a smaller turn),
-   otherwise dropped.
+   otherwise dropped. A wall that boxes the player in (``wall_boxin``) is dropped.
 4. ``fix_spans``: re-anchor arcs and chains on the notes left after step 3. An arc joins a
    note to the next note of the same hand; a chain starts on a note and runs along its cut.
    Ends that miss a note are moved onto the nearest note at that time (an arc tail onto
@@ -93,8 +94,31 @@ class PostReport:
         return ", ".join(parts) or "clean"
 
 
+def merge_walls(walls: list[Obstacle]) -> tuple[list[Obstacle], int]:
+    """Merge walls in the same columns that overlap in time and height into one wall
+    covering both. Returns (walls, number merged away)."""
+    out: list[Obstacle] = []
+    merged = 0
+    for w in sorted(walls, key=lambda o: (o.beat, o.x, o.y)):
+        for i, k in enumerate(out):
+            same_cols = (k.x, k.width) == (w.x, w.width)
+            in_time = w.beat < k.beat + k.duration - 1e-6 or w.beat <= k.beat + 1e-6
+            in_height = w.y < k.y + k.height and k.y < w.y + w.height
+            if same_cols and in_time and in_height:
+                y = min(k.y, w.y)
+                end = max(k.beat + k.duration, w.beat + w.duration)
+                top = max(k.y + k.height, w.y + w.height)
+                out[i] = dataclasses.replace(k, duration=end - k.beat, y=y, height=top - y)
+                merged += 1
+                break
+        else:
+            out.append(w)
+    return out, merged
+
+
 def dedupe(dmap: DifficultyMap) -> tuple[DifficultyMap, int]:
-    """Remove exact duplicates and same-tick objects in an occupied cell (first one wins)."""
+    """Remove exact duplicates and same-tick objects in an occupied cell (first one wins).
+    Walls overlapping in the same columns are merged (``merge_walls``)."""
     removed = 0
     cells: set[tuple[int, int, int]] = set()
 
@@ -124,7 +148,8 @@ def dedupe(dmap: DifficultyMap) -> tuple[DifficultyMap, int]:
 
     notes = free_cell(dmap.notes)
     bombs = free_cell(dmap.bombs)
-    obstacles = unique(dmap.obstacles, lambda o: o)
+    obstacles, merged = merge_walls(dmap.obstacles)
+    removed += merged
     arcs = unique(dmap.arcs, lambda o: o)
     chains = unique(dmap.chains, lambda o: o)
     rotations = unique(dmap.rotations, lambda r: beat_to_tick(r.beat))  # one turn per tick

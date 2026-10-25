@@ -198,6 +198,21 @@ def test_dodge_gap():
     assert rules_of(obstacles=[left, Obstacle(2, 1, 2, 0, 1, 5)]) == set()  # 0.5 s to move
 
 
+def test_wall_boxin():
+    flick = 1 / 24  # 21 ms at 120 BPM: too short to be a dodge wall
+    # The Stronger Expert playtest case: an outer wall, then centre-lane flicks on both sides.
+    walls = [Obstacle(0, 1, 3, 0, 1, 5), Obstacle(0.125, flick, 2, 0, 1, 5)]
+    assert rules_of(obstacles=walls) == set()
+    assert rules_of(obstacles=[*walls, Obstacle(0.25, flick, 1, 0, 1, 5)]) == {"wall_boxin"}
+    assert rules_of(obstacles=[Obstacle(0, 1, 1, 0, 2, 5)]) == {"wall_boxin"}  # one wide wall
+    assert rules_of(obstacles=[Obstacle(0, 1, 0, 2, 4, 3)]) == set()  # crouch
+    assert rules_of(obstacles=[Obstacle(0, 1, 0, 0, 1, 5), Obstacle(0, 1, 3, 0, 1, 5)]) == set()
+    side = [Obstacle(0, flick, 2, 0, 1, 5), Obstacle(0.25, flick, 2, 0, 1, 5)]
+    assert rules_of(obstacles=side) == set()
+    apart = [Obstacle(0, flick, 2, 0, 1, 5), Obstacle(2, flick, 1, 0, 1, 5)]
+    assert rules_of(obstacles=apart) == set()
+
+
 def test_crouch_ceiling_from_segments_is_one_dodge():
     walls = [Obstacle(b, 1, x, 2, 1, 3) for b in (0, 1) for x in range(4)]
     assert rules_of(obstacles=walls) == set()

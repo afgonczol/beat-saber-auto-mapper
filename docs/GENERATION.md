@@ -8,7 +8,7 @@ generator](#choosing-the-generator)):
 | --- | --- |
 | analyze | WS2 analysis. The song is padded with `BeatGrid.lead_in_s()` of silence so the bar before the first downbeat starts at 0 s (Beat Saber's beat 0). Map beat = grid beat + beats per bar. `timing.song_time_analysis` shifts the analysis the same way, so generators see `beat_times[i]` = map beat `i`. |
 | generate | Per mode, every difficulty in one batch (`ModelGenerator.generate_many`), or one `NoteGenerator.generate` call each. Then from the hardest down: a difficulty at 95% or more of the next harder one's NPS is generated again at 80% of it, so NPS strictly rises. |
-| rules | `postprocess`: snap to the 24-tick grid, dedupe, replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule. Then `fix_spans` re-anchors arcs and chains on the notes that are left (see [Arcs and chains](#arcs-and-chains)), and NJS and offset are set (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
+| rules | `postprocess`: snap to the 24-tick grid, dedupe (walls overlapping in the same columns merge into one), replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule, such as a wall that closes the second centre column within 300 ms of the first (`wall_boxin`, see [RULES.md](RULES.md#walls)). Then `fix_spans` re-anchors arcs and chains on the notes that are left (see [Arcs and chains](#arcs-and-chains)), and NJS and offset are set (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
 | lighting | Model lighting (L1) when there is a model, else the WS8 L0 rule lightshow. Both render through WS8 (`lighting.render`), v3 group lighting by default. With a human effect library (`bsmapper lights effects`, WS8c) the environment is one of its environments and the box groups are human passages chosen per phrase; otherwise WeaveEnvironment with the profile template. Any model failure falls back to L0. |
 | package | WS1 `package_map`: padded `song.egg`, cover (embedded art or a placeholder), v3 difficulty files with a v2 Info.dat, zip. Title and artist come from the tags, else from an `Artist - Title` filename. |
 
@@ -379,6 +379,13 @@ per 100 notes, except for one difficulty (below).
 - **Walls**: Stronger 90° Hard has 236 zero-length walls in the outer lanes (34.7
   `wall_duration` warnings per 100 notes). These are snapped "flick" walls, which 16% of
   human difficulties also have.
+- **Box-ins** (`wall_boxin`, after a playtest of Stronger Expert): walls closing both
+  centre columns within 300 ms are rare in generated maps. The playtested Stronger copy had 3
+  in 15 difficulties: Standard Expert beat 172.25, and One Saber Expert beats 134 and 246.
+  A fresh Stronger in all four modes had 1 in 20, Toxic 0 in 20, and 8 eval test songs
+  (Standard Hard to Expert+) 0 in 24. Generation now drops the later wall. Walls
+  overlapping in the same columns (Stronger Expert beats 164 and 164.125) are merged: 0–7
+  per difficulty.
 
 ## NJS and offset
 

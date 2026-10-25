@@ -10,6 +10,7 @@ from bsmapper.schema import (
     Difficulty,
     DifficultyMap,
     Note,
+    Obstacle,
     RotationEvent,
 )
 
@@ -44,6 +45,36 @@ def test_snap_and_dedupe() -> None:
     assert [n.beat for n in out.notes] == [4.0, 5.0]
     assert report.duplicates == 2
     assert report.errors == []
+
+
+def test_overlapping_walls_in_the_same_columns_merge() -> None:
+    walls = [
+        Obstacle(164.0, 0.5, 0, 0, 2, 5),
+        Obstacle(164.125, 0.5, 0, 0, 2, 5),  # overlaps the first: one wall to 164.625
+        Obstacle(164.0, 0.5, 0, 0, 2, 5),  # exact duplicate
+        Obstacle(164.25, 0.25, 0, 2, 2, 3),  # same columns, overlapping height
+        Obstacle(165.0, 1.0, 0, 0, 2, 5),  # starts after the merged wall ends
+        Obstacle(164.0, 1.0, 2, 0, 2, 5),  # other columns
+    ]
+    out, removed = dedupe(dmap(obstacles=walls))
+    assert removed == 3
+    assert out.obstacles == [
+        Obstacle(164.0, 0.625, 0, 0, 2, 5),
+        Obstacle(164.0, 1.0, 2, 0, 2, 5),
+        Obstacle(165.0, 1.0, 0, 0, 2, 5),
+    ]
+
+
+def test_wall_boxin_drops_the_later_wall() -> None:
+    # Stronger Expert playtest: lanes 3, 2 and 1 closed within a quarter beat.
+    walls = [
+        Obstacle(172.0, 1.0, 3, 0, 1, 5),
+        Obstacle(172.125, 1 / 24, 2, 0, 1, 5),
+        Obstacle(172.25, 1 / 24, 1, 0, 1, 5),
+    ]
+    out, report = postprocess(dmap(obstacles=walls), beatmap())
+    assert [(o.beat, o.x) for o in out.obstacles] == [(172.0, 3), (172.125, 2)]
+    assert report.dropped == {"wall_boxin": 1} and report.errors == []
 
 
 def test_parity_break_is_repaired() -> None:
