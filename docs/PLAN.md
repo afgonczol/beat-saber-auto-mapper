@@ -265,7 +265,7 @@ code changes.
 | M2 | 🟡 v0 done, v1 downloaded | v0: 2,448 maps / 7,526 difficulties / 25.9M note tokens (#24). v1: 10,001 maps / 66 GB raw (#30), not processed yet |
 | M3 | 🟡 trained, not evaluated | `note_v0` (88.6M params, 60k steps): val note loss 1.563, acc 0.773, mild overfit. WS10 eval (#11) next |
 | M4 | 🟡 model playable | `note_v0` drives `generate` and the server (#29). First model playtest passed on timing and flow; density and reaction-time fixes are in progress (see below) |
-| M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28). note_v1 lighting decoder is the default (#35); WS8b readability limits (#36). WS8b phase 2: style token + section scene plan, the `light_v2` lights-only fine-tune (LIGHTING_V2.md §5) |
+| M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28). note_v1 lighting decoder is the default (#35); WS8b readability limits (#36). WS8b phase 2: style token + section scene plan, the `light_v2` lights-only fine-tune, trained 2026-10-24 and awaiting playtest (LIGHTING_V2.md §5) |
 | M6 | 🟡 awaiting playtest | WS6b (#12): arcs on from Hard up, arc/chain repair and rules, `rotation_step`. One Saber, 90° and 360° from note_v1 pass every rule check; no fine-tuning was needed so far |
 | M7 | 🟡 mostly done | UI shell (#21), real pipeline + install button (#25, #26) |
 | M8 | ⬜ not started | |

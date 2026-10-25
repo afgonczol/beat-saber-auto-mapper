@@ -314,3 +314,6 @@ in [LIGHTING_V2.md](LIGHTING_V2.md) §5. What it changes here:
 - **Data:** `LightWindows(light_version=2, styles=...)` adds the style label, the
   window's scene and the light reference, each with its own dropout. With
   `light_labelled_only`, it only uses maps that have a style label.
+- **Run (2026-10-24):** 30k steps in 2.9 h. `best.pt` is step 6000, at val light loss
+  1.424; the val loss is flat after ~1k steps. The adherence results are in LIGHTING_V2.md
+  §5.
