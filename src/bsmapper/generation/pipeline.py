@@ -104,6 +104,9 @@ class GenerateOptions:
     # Lighting style of a v2 light model (WS8b): "auto" (picked for the song), "none" or a
     # style name (``generation.lighting.LIGHT_STYLE_CHOICES``). Ignored by v1 models.
     light_style: str = "auto"
+    # v3 lighting re-uses human group lighting (``lighting.effects``) when the pipeline has
+    # an effect library for the environment (WS8c); False keeps the box-group template.
+    light_effects: bool = True
     # Object types; None = what most human maps of that mode and difficulty use
     # (``density.object_flags``).
     bombs: bool | None = None
@@ -213,6 +216,7 @@ class Pipeline:
         checker: RuleChecker | None = None,
         tracker: str = "auto",
         ffmpeg: str = "ffmpeg",
+        effects_root: Path | None = None,
     ) -> None:
         self.checker = checker or RuleChecker()
         self.generator = generator or StubGenerator(checker=self.checker)
@@ -221,9 +225,11 @@ class Pipeline:
         self.lighting = lighting
         self.light_model = light_model
         self.ffmpeg = ffmpeg
+        self.effects_root = effects_root  # human effect libraries (``runtime.find_light_effects``)
         self.setup = None  # runtime.GeneratorSetup when built by make_pipeline
         self.last_lighting = ""  # "model" or "rules": what the last build used
         self.last_light_style: str | None = None  # the style a v2 light model was asked for
+        self.last_effects: list[tuple[str, str]] = []  # human maps (key, mapper) lights came from
         self.last_notes: list[str] = []  # remarks from the last build (fallbacks)
 
     @property
@@ -423,6 +429,8 @@ class Pipeline:
         if source == "model" and self.light_model is None:
             raise ValueError("lighting_source='model' needs a pipeline with a light model")
         note = None
+        effects = self._effects(opts)
+        self.last_effects = []
         if self.light_model is not None and source in ("auto", "model"):
             from bsmapper.generation.lighting import ModelLightingGenerator
 
@@ -433,16 +441,30 @@ class Pipeline:
                     time_offset_s=song.lead_in_s,
                     seed=opts.seed,
                     light_style=opts.light_style,
+                    effects=effects,
                 )
                 self._light_with(model_gen, song, beatmap, opts)
                 self.last_light_style = model_gen.last_style
+                self.last_effects = list(effects.last_sources) if effects else []
                 return "model", None
             except Exception as exc:  # any model failure: the L0 rules still light the map
                 log.warning("model lighting failed (%s); using the rule lightshow", exc)
                 note = f"Model lighting failed ({exc}); used the rule-based lightshow."
-        rules = self.lighting or RuleLightingGenerator(time_offset_s=song.lead_in_s)
+        rules = self.lighting or RuleLightingGenerator(
+            time_offset_s=song.lead_in_s, effects=effects
+        )
         self._light_with(rules, song, beatmap, opts)
+        self.last_effects = list(effects.last_sources) if effects and not self.lighting else []
         return "rules", note
+
+    def _effects(self, opts: GenerateOptions):
+        """The human effect renderer for this build, or None (no library, or not v3)."""
+        if not (opts.light_effects and opts.lighting == "v3" and self.effects_root):
+            return None
+        from bsmapper.lighting import EffectRenderer
+
+        style = opts.light_style if opts.light_style not in ("auto", "none") else None
+        return EffectRenderer(Path(self.effects_root), seed=opts.seed, style=style)
 
     @staticmethod
     def _light_with(generator, song: Song, beatmap: Beatmap, opts: GenerateOptions) -> None:

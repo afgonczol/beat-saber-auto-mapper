@@ -3,10 +3,12 @@
 generator = RuleLightingGenerator()
 lightshow = generator.generate(analysis, beatmap, "v3")  # interfaces.LightingGenerator
 light_beatmap(beatmap, analysis, "v3")  # also picks a suitable environment
+RuleLightingGenerator(effects=EffectRenderer(Path("checkpoints/light_effects")))  # WS8c
 
 See docs/LIGHTING.md.
 """
 
+from bsmapper.lighting.effects import EffectLibrary, EffectRenderer, available_libraries
 from bsmapper.lighting.generator import (
     DEFAULT_LEGACY_ENVIRONMENT,
     DEFAULT_V3_ENVIRONMENT,
@@ -29,12 +31,15 @@ __all__ = [
     "DEFAULT_LEGACY_ENVIRONMENT",
     "DEFAULT_V3_ENVIRONMENT",
     "STYLES",
+    "EffectLibrary",
+    "EffectRenderer",
     "EnvironmentProfile",
     "RuleConfig",
     "RuleLightingGenerator",
     "RuleLightshow",
     "SectionPlan",
     "available_environments",
+    "available_libraries",
     "environment_for",
     "get_profile",
     "light_beatmap",

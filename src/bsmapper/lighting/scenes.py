@@ -82,6 +82,21 @@ def _repeat_of(
     return src if n * 2 > len(members) else None
 
 
+def section_repeats(
+    sections: Sequence[SectionSpan], n_windows: int, refs: Sequence[int] | None
+) -> list[int | None]:
+    """Per section, the earlier section its music repeats (most of its windows' reference
+    spans start there), else None."""
+    owner = window_sections(sections, n_windows)
+    members: dict[int, list[int]] = {}
+    for k, s in enumerate(owner):
+        members.setdefault(s, []).append(k)
+    return [
+        _repeat_of(s, members[s], owner, refs) if s in members else None
+        for s in range(len(sections))
+    ]
+
+
 def _draw(
     model: StyleModel, style: int | None, bin_: int, rng: np.random.Generator
 ) -> Scene | None:

@@ -27,15 +27,22 @@ lighting style and a section-level scene plan per window:
   repeats (the same structure references the notes use).
 
 v1 checkpoints (note_v1) ignore all three and decode as before.
+
+With ``effects`` (WS8c), v3 lighting in an environment that has a human effect library
+re-uses human group lighting (``lighting.effects``): the decoded lightshow and the L0
+sections set each phrase's activity and rhythm, the light style biases the choice, and
+sections whose music repeats an earlier section replay its effects.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING
 
 from bsmapper.generation.model import reference_starts, song_features
 from bsmapper.interfaces import AudioAnalysis, LightingStyle
+from bsmapper.lighting.effects import EffectRenderer
 from bsmapper.lighting.events import LightColor
 from bsmapper.lighting.readability import (
     IntensityAt,
@@ -44,11 +51,12 @@ from bsmapper.lighting.readability import (
     limit_lightshow,
     section_intensity,
 )
-from bsmapper.lighting.scenes import SectionSpan, plan_scenes
+from bsmapper.lighting.scenes import SectionSpan, plan_scenes, section_repeats
 from bsmapper.lighting.styles import StyleModel, song_vector, window_loudness
 from bsmapper.schema import Beatmap, Characteristic, Difficulty, DifficultyMap, Lightshow
 from bsmapper.tokenizer import (
     LIGHT_GRAMMAR,
+    WINDOW_BEATS,
     Conditioning,
     LightingTokenizer,
     LightPrompt,
@@ -97,6 +105,7 @@ class ModelLightingGenerator:
         light_style: str = "auto",
         style_guidance: float = 1.0,
         references: bool = True,
+        effects: EffectRenderer | None = None,
     ) -> None:
         if not model.cfg.has_lighting:
             raise ValueError("this checkpoint has no lighting decoder")
@@ -108,6 +117,8 @@ class ModelLightingGenerator:
         self.light_style = light_style
         self.style_guidance = style_guidance
         self.references = references
+        self.effects = effects
+        self._refs: list[int] | None = None  # the last song's structure references
         styles = getattr(model, "light_styles", None)
         self.styles = StyleModel.from_dict(styles) if styles else None
         if light_style not in ("auto", "none") and self.styles is not None:
@@ -130,6 +141,9 @@ class ModelLightingGenerator:
         else:
             cond = Conditioning.from_map(lead, nps=notes_per_second(lead, beatmap))
         note_windows = MapTokenizer().encode(lead, cond, n_windows=n_windows)
+        self._refs = None
+        if self.references and (self.effects is not None or self.styles is not None):
+            self._refs = reference_starts(analysis, beatmap, feats)
         # The note track's prefix must be in the checkpoint's layout (note_v0 has no
         # INTENSITY token; its vocabulary would not even have the id).
         prefix = cond.prefix_ids(version=version_for_vocab(self.model.cfg.note_vocab))
@@ -169,7 +183,7 @@ class ModelLightingGenerator:
         n_windows = feats.shape[0] // 384
         style = self.choose_style(feats, beatmap.bpm)
         self.last_style = "none" if style is None else self.styles.names[style]  # type: ignore[union-attr]
-        refs = reference_starts(analysis, beatmap, feats) if self.references else None
+        refs = self._refs
         prompts = [LightPrompt(style)] * n_windows
         if self.styles is not None:
             plan = RuleLightingGenerator(time_offset_s=self.time_offset_s).plan(analysis, beatmap)
@@ -217,7 +231,20 @@ class ModelLightingGenerator:
             )
             log.info("readability filter: %s", report.summary())
         plan = RuleLightshow(basic, sections.sections, sections.end_beat)
-        return render(plan, style, beatmap.environment)
+        repeats = None
+        if self.effects is not None:
+            self.effects.style = self.effect_style()
+            spans = [SectionSpan(s.start, s.end) for s in plan.sections]
+            n_windows = len(self._refs) if self._refs else math.ceil(plan.end_beat / WINDOW_BEATS)
+            repeats = section_repeats(spans, n_windows, self._refs)
+        return render(plan, style, beatmap.environment, self.effects, repeats)
+
+    def effect_style(self) -> str | None:
+        """The light style that biases the effects: the style the model was asked for,
+        else a named ``light_style``."""
+        if self.last_style not in (None, "none"):
+            return self.last_style
+        return self.light_style if self.light_style not in ("auto", "none") else None
 
 
 def configured_light_style(path=None) -> str:
