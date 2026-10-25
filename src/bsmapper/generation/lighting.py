@@ -118,7 +118,7 @@ class ModelLightingGenerator:
         self.style_guidance = style_guidance
         self.references = references
         self.effects = effects
-        self._refs: list[int] | None = None  # the last song's structure references
+        self._refs = None  # the last song's structure references (reference_starts)
         styles = getattr(model, "light_styles", None)
         self.styles = StyleModel.from_dict(styles) if styles else None
         if light_style not in ("auto", "none") and self.styles is not None:
@@ -235,7 +235,11 @@ class ModelLightingGenerator:
         if self.effects is not None:
             self.effects.style = self.effect_style()
             spans = [SectionSpan(s.start, s.end) for s in plan.sections]
-            n_windows = len(self._refs) if self._refs else math.ceil(plan.end_beat / WINDOW_BEATS)
+            n_windows = (
+                len(self._refs)
+                if self._refs is not None
+                else math.ceil(plan.end_beat / WINDOW_BEATS)
+            )
             repeats = section_repeats(spans, n_windows, self._refs)
         return render(plan, style, beatmap.environment, self.effects, repeats)
 

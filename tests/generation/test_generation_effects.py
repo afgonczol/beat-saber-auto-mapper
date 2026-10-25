@@ -6,6 +6,7 @@ import gzip
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 from gen_synthetic import FakeAnalyzer
 
@@ -64,3 +65,36 @@ def test_pipeline_lights_v3_from_the_effect_library(tmp_path: Path) -> None:
 
     beatmap, _ = pipeline.build(song, GenerateOptions(lighting="chroma"))
     assert pipeline.last_effects == [] and not beatmap.lightshow.event_box_groups
+
+
+def test_model_lighting_renders_with_effects(tmp_path: Path, monkeypatch) -> None:
+    torch = pytest.importorskip("torch")
+    from gen_synthetic import make_analysis
+
+    from bsmapper.generation import lighting as lighting_mod
+    from bsmapper.generation import tempo_beatmap
+    from bsmapper.lighting import EffectRenderer
+    from bsmapper.models import MapperModel, ModelConfig
+    from bsmapper.tokenizer import LIGHT_VOCAB_SIZES
+
+    tiny = dict(
+        d_model=32, n_heads=4, ff_mult=2, dropout=0.0, encoder_layers=1, decoder_layers=1,
+        light_layers=1, note_memory_layers=1, max_len=192, light_max_len=192,
+        note_memory_len=128, light_vocab=LIGHT_VOCAB_SIZES[1],
+    )  # fmt: skip
+    torch.manual_seed(0)
+    model = MapperModel(ModelConfig(**tiny)).eval()
+    monkeypatch.setattr(lighting_mod, "check_density", lambda *a: None)  # a random tiny model
+    analysis = make_analysis(duration=20.0)
+    frames = int(20.0 * analysis.frame_rate)
+    analysis.features["chroma"] = np.random.default_rng(0).random((frames, 12)).astype(np.float32)
+    beatmap = tempo_beatmap(analysis)
+    beatmap.environment = "PyroEnvironment"
+    effects = EffectRenderer(make_library(tmp_path / "fx"))
+    gen = lighting_mod.ModelLightingGenerator(
+        model, max_body_tokens=24, readability=None, effects=effects, light_style="calm"
+    )
+    lightshow = gen.generate(analysis, beatmap, "v3")
+    assert lightshow.event_box_groups and effects.last_sources == [("abc", "someone")]
+    assert gen._refs is not None  # structure references feed the section repeats
+    assert effects.style == "calm"  # a named style biases the effects, even for v1 models
