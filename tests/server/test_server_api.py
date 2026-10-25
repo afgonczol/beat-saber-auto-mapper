@@ -69,6 +69,7 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "seed": 7,
         "intensity": None,
         "repetition": None,
+        "light_style": None,
         "arcs": None,
         "chains": None,
         "njs": None,
@@ -76,6 +77,10 @@ def test_create_job_returns_options(client: TestClient) -> None:
     }
     info = upload(client, arcs="false", chains="true")
     assert (info["options"]["arcs"], info["options"]["chains"]) == (False, True)
+    assert upload(client, light_style="calm")["options"]["light_style"] == "calm"
+    r = client.post("/api/jobs", files={"audio": ("a.mp3", b"x", "audio/mpeg")},
+                    data={"light_style": "disco"})  # fmt: skip
+    assert r.status_code == 422
 
 
 def test_defaults_and_validation(client: TestClient) -> None:

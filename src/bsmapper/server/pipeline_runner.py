@@ -43,6 +43,8 @@ STUB_NOTE = "Notes come from the placeholder stub generator, not the ML model."
 
 
 def _options(options: JobOptions) -> GenerateOptions:
+    from bsmapper.generation.lighting import configured_light_style
+
     jump = {}
     if options.reaction_time is not None:
         override = JumpOverride(reaction_s=options.reaction_time)
@@ -58,6 +60,7 @@ def _options(options: JobOptions) -> GenerateOptions:
         repetition=(
             options.repetition if options.repetition is not None else configured_repetition()
         ),
+        light_style=options.light_style or configured_light_style(),
         njs=options.njs,
         jump=jump,
         jump_defaults=configured_jumps(),

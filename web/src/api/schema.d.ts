@@ -343,6 +343,11 @@ export interface components {
              */
             repetition?: number | null;
             /**
+             * Light Style
+             * @description Look of model lights: auto, none, pulse, calm, scenes, flash or accent; omit for the configured default.
+             */
+            light_style?: ("auto" | "none" | "pulse" | "calm" | "scenes" | "flash" | "accent") | null;
+            /**
              * Arcs
              * @description Arcs on or off; omit for the configured default (else Hard up).
              */
@@ -627,6 +632,11 @@ export interface components {
              * @description How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = the learned amount, 1 = twice as strongly; null = the configured default.
              */
             repetition?: number | null;
+            /**
+             * Light Style
+             * @description Look of model lights (light_v2 checkpoints): auto = picked for the song, none = the model's choice, or a style; null = the configured default (else auto).
+             */
+            light_style?: ("auto" | "none" | "pulse" | "calm" | "scenes" | "flash" | "accent") | null;
             /**
              * Arcs
              * @description Arcs on or off in every difficulty; null = the configured default (else from Hard up).

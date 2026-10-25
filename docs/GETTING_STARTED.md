@@ -18,6 +18,14 @@ cd G:\ClaudeProjects\beat-saber-auto-mapper
 bsmapper --help
 ```
 
+Lights in group-lighting environments re-use human lighting effects. Their library lives at
+`checkpoints\light_effects` and is built once from the dataset, which takes about 5 minutes.
+It is already built on this PC. To rebuild it:
+
+```powershell
+bsmapper lights effects data\processed_v1
+```
+
 If PowerShell refuses to run `Activate.ps1`, either run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or skip activation and call
 `.\.venv\Scripts\bsmapper.exe` directly.
@@ -48,9 +56,11 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 | `--reaction-time` | Seconds from spawn to strike (current: Expert 0.80, Expert+ 0.70). | `--reaction-time Expert+=0.75` |
 | `--njs` | Note jump speed. | `--njs Expert+=17` |
 | `--lighting` | `v3` (default; works unmodded), `vanilla`, or `chroma` (needs the Chroma mod). | `--lighting vanilla` |
+| `--light-style` | The look of the model's lights, with a `light_v2` checkpoint: `auto` (picked for the song; another seed may pick another), `pulse`, `calm`, `scenes`, `flash`, `accent`, or `none` (the model's own choice). | `--light-style calm` |
 | `--lighting-source` | `model` or `rules`. If the model's lights are too jittery for a song, `rules` gives a calmer, simpler show. | `--lighting-source rules` |
 | `--seed` | A different seed gives a different map for the same song. | `--seed 7` |
-| `--environment` | The Info.dat environment. | `--environment EDMEnvironment` |
+| `--environment` | The Info.dat environment. With the human effect library (below) the default is one of its environments, picked with the seed. | `--environment LizzoEnvironment` |
+| `--no-light-effects` | Use the old fixed group-lighting template instead of human effects. | `--no-light-effects` |
 
 Run `bsmapper generate --help` for everything.
 
@@ -75,11 +85,15 @@ bsmapper generate "song.mp3" --lighting-source rules --install
 
 ## 3. Or use the web UI
 
+The easiest way: **double-click `bsmapper-web.cmd`** in the repo folder (or pin a shortcut to
+it). It starts the server and opens <http://127.0.0.1:8765> in your browser after a few
+seconds. Close its window to stop the server. From a terminal, the same thing is:
+
 ```powershell
 bsmapper serve
 ```
 
-Then open <http://127.0.0.1:8765>:
+In the page:
 1. Drop in a song.
 2. Pick difficulties, modes, lighting, intensity, style, repetition, arcs and chains.
 3. Watch the progress.
@@ -87,8 +101,16 @@ Then open <http://127.0.0.1:8765>:
 5. Click **Download** or **Install to game**. You can regenerate a single difficulty with
    a new seed.
 
+A full song with all five Standard difficulties takes about a minute and a half on the 3090.
 The UI is already built (`web\dist`). After pulling web changes, rebuild it with
 `cd web; npm install; npm run build`.
+
+The beat tracker `beat_this` gives a better beat grid than the librosa fallback. It is not
+in the pip extras (it installs from GitHub). If generation logs say it fell back to librosa:
+
+```powershell
+pip install "beat-this @ https://github.com/CPJKU/beat_this/archive/main.zip"
+```
 
 ## 4. Your settings file
 
@@ -99,6 +121,8 @@ it. For example:
 [generate]
 intensity = 0.8
 # repetition = 0.5
+# light_style = "auto"   # or pulse, calm, scenes, flash, accent, none (light_v2 checkpoints)
+# light_effects = 'G:\elsewhere\light_effects'   # default: checkpoints/light_effects
 # arcs = false     # true: arcs in every difficulty; false: none; unset: from Hard up
 # chains = false   # the same for chains (unset: from Expert up)
 # custom_levels = 'C:\Program Files (x86)\Steam\steamapps\common\Beat Saber\Beat Saber_Data\CustomLevels'

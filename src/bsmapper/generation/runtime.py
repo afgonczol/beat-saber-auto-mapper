@@ -28,6 +28,7 @@ DEFAULT_CHECKPOINTS = (
     Path("checkpoints") / "note_v0" / "best.pt",
 )
 DEFAULT_CHECKPOINT = DEFAULT_CHECKPOINTS[0]
+DEFAULT_LIGHT_EFFECTS = Path("checkpoints") / "light_effects"  # `bsmapper lights effects`
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _models: dict[tuple[str, str], object] = {}
@@ -57,6 +58,31 @@ def find_checkpoint(explicit: Path | str | None = None) -> Path | None:
     for candidate in candidates:
         if candidate is not None and candidate.is_file():
             return candidate
+    return None
+
+
+def configured_light_effects(path: Path | None = None) -> Path | None:
+    """``[generate] light_effects`` from the user config, if set."""
+    cfg = path or config_path()
+    if not cfg.is_file():
+        return None
+    with cfg.open("rb") as f:
+        value = tomllib.load(f).get("generate", {}).get("light_effects")
+    return Path(value).expanduser() if value else None
+
+
+def find_light_effects(explicit: Path | str | None = None) -> Path | None:
+    """The human effect library folder (WS8c), or None when there is none."""
+    from bsmapper.lighting import available_libraries
+
+    candidates = [Path(explicit).expanduser()] if explicit is not None else []
+    candidates += [configured_light_effects()]
+    candidates += [Path.cwd() / DEFAULT_LIGHT_EFFECTS, REPO_ROOT / DEFAULT_LIGHT_EFFECTS]
+    for candidate in candidates:
+        if candidate is not None and available_libraries(candidate):
+            return candidate
+    if explicit is not None:
+        raise FileNotFoundError(f"no light effect library in {explicit}")
     return None
 
 
@@ -149,6 +175,8 @@ def make_pipeline(
 
         note_gen = ModelGenerator(model)
     light_model = model if setup.lighting == "model" else None
+    if "effects_root" not in pipeline_kwargs:
+        pipeline_kwargs["effects_root"] = find_light_effects()
     pipeline = Pipeline(note_gen, light_model=light_model, **pipeline_kwargs)
     pipeline.setup = setup
     return pipeline

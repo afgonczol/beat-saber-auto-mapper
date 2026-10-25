@@ -16,6 +16,17 @@ v     size   added
 1     655    everything up to ``SLICE`` (note_v0)
 2     663    ``INTENSITY_0..4``, ``INTENSITY_NONE``, ``REF``, ``REF_END`` (note_v1)
 ====  =====  ==========================================================
+
+The lighting vocabulary is versioned the same way (``LIGHT_VOCAB_SIZES``):
+
+====  =====  ==========================================================
+v     size   added
+====  =====  ==========================================================
+1     500    events only: lights have no prompt beyond the tail (note_v0, note_v1)
+2     532    the light prompt (``tokenizer.lighting.LightPrompt``): ``LSTYLE_0..7``,
+             scene tokens ``LEVEL_0..6``, ``PAL_*``, ``FLIPS_0..3`` (each with a
+             ``_NONE``), and ``REF`` / ``REF_END`` for light reference blocks (WS8b)
+====  =====  ==========================================================
 """
 
 from __future__ import annotations
@@ -55,6 +66,15 @@ DUR_MAX_BEATS = 16  # whole-beat duration tokens DUR_1..DUR_16, repeated for lon
 LIGHT_EVENT_TYPES = (*range(0, 20), 40, 41, 42, 43)
 LIGHT_VALUE_MAX = 31
 LIGHT_FLOAT_MAX = 40  # float_value k / 20 (grid.FRAC_STEPS) for k in 0..40, i.e. 0.0..2.0
+LIGHT_TOKENIZER_VERSION = 2
+LIGHT_STYLE_SLOTS = 8  # LSTYLE_0..7: room for re-clustered style sets without new ids
+# Scene tokens (``tokenizer.lighting.window_scene``): light events per beat, the colour
+# mix and the share of lit events that change their light's colour. Edges from the
+# labelled gold windows of dataset v1 (docs/LIGHTING_V2.md, phase 2).
+LIGHT_LEVEL_EDGES = (0.5, 2.0, 4.0, 7.0, 12.0, 24.0)
+LIGHT_PALETTES = ("DARK", "BLUE", "BLUE_LEAD", "EVEN", "RED_LEAD", "RED", "WHITE")
+LIGHT_RED_EDGES = (0.15, 0.42, 0.58, 0.85)  # red share: BLUE | BLUE_LEAD | EVEN | ...
+LIGHT_FLIP_EDGES = (0.05, 0.15, 0.3)  # colour flips per lit event
 # Chroma colours are quantized to this palette (RGB, alpha dropped): 12 hues and white.
 PALETTE: tuple[tuple[float, float, float], ...] = (
     (1.0, 0.0, 0.0),
@@ -238,8 +258,19 @@ def build_light_vocab() -> Vocab:
             ("VAL", range(LIGHT_VALUE_MAX + 1), _default_name),
             ("FLOAT", range(LIGHT_FLOAT_MAX + 1), _default_name),  # value k / 20
             ("COLOR", range(len(PALETTE)), _default_name),
+            # --- v2 (append only): the light prompt ---
+            ("LSTYLE", [*range(LIGHT_STYLE_SLOTS), None], _nullable_name),
+            ("LEVEL", [*range(len(LIGHT_LEVEL_EDGES) + 1), None], _nullable_name),
+            ("PAL", [*range(len(LIGHT_PALETTES)), None], _palette_name),
+            ("FLIPS", [*range(len(LIGHT_FLIP_EDGES) + 1), None], _nullable_name),
+            ("REF", [None], _default_name),
+            ("REF_END", [None], _default_name),
         ]
     )
+
+
+def _palette_name(group: str, value: Any) -> str:
+    return f"{group}_NONE" if value is None else f"{group}_{LIGHT_PALETTES[value]}"
 
 
 NOTE_VOCAB = build_note_vocab()
@@ -255,6 +286,18 @@ def version_for_vocab(size: int) -> int:
 
 
 LIGHT_VOCAB = build_light_vocab()
+LIGHT_VOCAB_SIZES = {1: LIGHT_VOCAB.id("LSTYLE", 0), 2: len(LIGHT_VOCAB)}
+
+
+def light_version_for_vocab(size: int) -> int:
+    """Lighting tokenizer version of a lighting decoder from its vocabulary size."""
+    for version, n in LIGHT_VOCAB_SIZES.items():
+        if n == size:
+            return version
+    raise ValueError(f"no lighting tokenizer version has a vocabulary of {size} tokens")
+
+
 assert NOTE_VOCAB.id("PAD") == PAD and NOTE_VOCAB.id("SEP") == SEP
 assert NOTE_VOCAB_SIZES[1] == 655, "v1 ids changed: note_v0 checkpoints would break"
 assert LIGHT_VOCAB.id("BOS") == BOS and LIGHT_VOCAB.id("EOS") == EOS
+assert LIGHT_VOCAB_SIZES[1] == 500, "light v1 ids changed: note_v0/v1 checkpoints would break"

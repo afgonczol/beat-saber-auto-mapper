@@ -176,6 +176,89 @@ It keeps the most important moments first: downbeats, then beats, then half beat
 strobes, pattern repetition and v3 rotation speed. [LIGHTING_V2.md](LIGHTING_V2.md) has the
 diagnosis, the human reference numbers and the design options for the next lighting model.
 
+## Styles and scene plans (WS8b phase 2)
+
+The v2 light prompt conditions the lighting decoder on a style and a per-window scene:
+
+- `lighting.styles`: style features, the `StyleModel` (k-means styles `pulse`, `calm`,
+  `flash`, `scenes`, `accent`, an auto-pick from song features, and scene tables);
+- `lighting.style_build` and `bsmapper lights styles DATASET`: label a dataset;
+- `lighting.scenes.plan_scenes`: one scene per L0 section at generation.
+
+Readability limits still run after the model. [LIGHTING_V2.md](LIGHTING_V2.md) §5 has the
+details and the `light_v2` fine-tune.
+
+## Human effects (WS8c)
+
+`render_v3` maps the five basic channels onto one fixed box-group template per
+environment, so every song ended up looking alike: all lights of a group together, red
+and blue only, frequent spins. Human group-lighting maps use far more. Espresso (Lizzo)
+uses 26 different index filters, white for 17% of its colour events, chases across a
+group's lights and rotations on two axes. How It's Done (Pyro) uses 49 filters and
+moves lights with translations. `lighting.effects` re-uses that human group lighting.
+
+**Library.** `bsmapper lights effects DATASET` (`lighting.effects_build`) reads every kept
+dataset map with v3 box groups from the raw zips. It leaves out maps that need Chroma or
+Noodle and sequenced shows (more than 25k box groups). It writes
+`checkpoints/light_effects/<Environment>/`:
+
+- `index.json`: per map, per-bar descriptors: colour activity, motion, white / red /
+  blue counts and a 16-step rhythm;
+- `<key>.json.gz`: the map's box groups, basic events and boosts.
+
+Environments with fewer than 8 maps are skipped. It holds human lightshows, so it is not
+committed (like `data/` and the checkpoints).
+
+| Environment | Maps | Environment | Maps |
+|---|---|---|---|
+| TheWeekndEnvironment | 70 | WeaveEnvironment | 34 |
+| TheSecondEnvironment | 65 | EDMEnvironment | 32 |
+| LizzoEnvironment | 62 | TheRollingStonesEnvironment | 26 |
+| RockMixtapeEnvironment | 61 | QueenEnvironment | 19 |
+| PyroEnvironment | 52 | ColliderEnvironment | 18 |
+| Dragons2Environment | 43 | Monstercat2Environment | 17 |
+| Panic2Environment | 43 | DaftPunk / Britney / Lattice / LinkinPark2 | 14 / 12 / 11 / 8 |
+
+**Generation** (`EffectRenderer`, used by `render` for v3 when the environment has a
+library):
+
+1. **Targets.** Per bar, the activity target is the section intensity blended with how
+   busy the generated basic lightshow is there (both song-relative). The rhythm target
+   is the generated light events' onsets on 16 steps.
+2. **Phrases.** Each L0 section is cut into phrases of up to 8 bars.
+3. **Choice.** Per phrase, it picks the human passage of the same length whose activity
+   (a percentile within the environment) and rhythm match best, sampled with the seed
+   among the 12 best.
+   - It prefers to continue the passage before it in the same section.
+   - It prefers sources the song already uses, so a song keeps the vocabulary of 2–4
+     mappers.
+   - It avoids bars the song has already played.
+   - A section whose music repeats an earlier one (note_v1's structure references)
+     replays that section's passages.
+   - The light style shifts the activity target and the liking for motion and white.
+   - Red and blue swap where needed so the passage leads with the section's L0 colour.
+4. **Splice.** The passage's box groups, basic events and boosts are copied with an
+   offset. At the cut, the source's state is rebuilt from its earlier box groups: light
+   colours instantly, angles and positions with a quarter-beat glide. Groups the
+   previous passage set and the new source does not are turned off or sent back to
+   rest. Every colour group goes dark at the end.
+
+Bars are 4 beats from beat 0, which the beat grid puts on a downbeat.
+
+**Defaults.**
+- **Environment:** with no `--environment`, v3 picks one of the libraries with at least 30
+  maps, using the seed. Without a library, the default stays WeaveEnvironment with the
+  profile renderer.
+- **Turning it off:** `--no-light-effects` (`GenerateOptions.light_effects=False`) keeps
+  the template. Other environments with a profile also keep it.
+- **Library location:** generation finds the library in `checkpoints/light_effects` (the
+  working folder or the repository) or at `[generate] light_effects` in the config.
+- **Credits:** the CLI prints which human maps (key and mapper) each song's lights come
+  from.
+
+**Caveat.** The lights are copied passages of human lightshows. That is fine for playing
+locally. Publishing such a map should credit the source mappers that the CLI lists.
+
 ## Open points
 
 - **In-game check.** Done means the lightshow is visibly synced in-game for all three

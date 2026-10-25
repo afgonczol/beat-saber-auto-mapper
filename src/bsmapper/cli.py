@@ -9,6 +9,8 @@ import typer
 app = typer.Typer(help="Automatic Beat Saber map generator.", no_args_is_help=True)
 data_app = typer.Typer(help="Dataset scraping and building (WS3).")
 app.add_typer(data_app, name="data")
+lights_app = typer.Typer(help="Lighting style labels, scene tables (WS8b) and effects (WS8c).")
+app.add_typer(lights_app, name="lights")
 
 
 _MODE_ALIASES = {"90": "90Degree", "360": "360Degree", "onehand": "OneSaber"}
@@ -98,7 +100,11 @@ def generate(
         help="Seconds from spawn to strike: one value for Expert and Expert+, or per "
         "difficulty (Hard=0.9,Expert+=0.75). Defaults: 1.2/1.0/0.88/0.8/0.7.",
     ),
-    environment: str | None = typer.Option(None, help="Info.dat environment, e.g. EDMEnvironment."),
+    environment: str | None = typer.Option(
+        None,
+        help="Info.dat environment, e.g. LizzoEnvironment. Default for v3: one with a human "
+        "effect library, picked with the seed (else WeaveEnvironment).",
+    ),
     generator: str = typer.Option(
         "auto", help="Notes from: model, stub, or auto (the model when a checkpoint is found)."
     ),
@@ -109,6 +115,16 @@ def generate(
     ),
     lighting_source: str = typer.Option(
         "auto", help="Lights from: model, rules, or auto (the model when notes are)."
+    ),
+    light_style: str | None = typer.Option(
+        None,
+        help="Look of model lights (light_v2 checkpoints): auto (picked for the song), none, "
+        "pulse, calm, scenes, flash or accent. Default: [generate] light_style, else auto.",
+    ),
+    light_effects: bool = typer.Option(
+        True,
+        "--light-effects/--no-light-effects",
+        help="v3 lights re-use human group-lighting effects (checkpoints/light_effects).",
     ),
     device: str | None = typer.Option(None, help="cuda or cpu; default cuda when available."),
     bombs: bool | None = typer.Option(None, "--bombs/--no-bombs", help="Default: per difficulty."),
@@ -144,6 +160,7 @@ def generate(
         configured_intensity,
         configured_repetition,
     )
+    from bsmapper.generation.lighting import LIGHT_STYLE_CHOICES, configured_light_style
     from bsmapper.lighting import STYLES
     from bsmapper.schema import Characteristic, Difficulty
 
@@ -155,6 +172,7 @@ def generate(
     for value, choices, hint in (
         (generator, ("auto", "model", "stub"), "--generator"),
         (lighting_source, ("auto", "model", "rules"), "--lighting-source"),
+        (light_style or "auto", LIGHT_STYLE_CHOICES, "--light-style"),
     ):
         if value not in choices:
             raise typer.BadParameter(f"choose from {', '.join(choices)}", param_hint=hint)
@@ -170,6 +188,8 @@ def generate(
         if repetition is None:
             repetition = configured_repetition()
         objects = configured_objects()
+        if light_style is None:
+            light_style = configured_light_style()
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
     opts = GenerateOptions(
@@ -186,6 +206,8 @@ def generate(
         jump_defaults=jump_defaults,
         environment=environment,
         lighting_source=lighting_source,
+        light_style=light_style,
+        light_effects=light_effects,
         bombs=objects.get("bombs") if bombs is None else bombs,
         walls=objects.get("walls") if walls is None else walls,
         arcs=objects.get("arcs") if arcs is None else arcs,
@@ -223,8 +245,13 @@ def generate(
     bm = result.beatmap
     typer.echo(
         f"\n{bm.song_name} - {bm.song_author or '?'}  ({result.song.bpm:g} BPM, "
-        f"{bm.environment}, {lighting} lighting from {pipeline.last_lighting}, {bm.mapper})"
+        f"{bm.environment}, {lighting} lighting from {pipeline.last_lighting}"
+        + (f" ({pipeline.last_light_style} style)" if pipeline.last_light_style else "")
+        + f", {bm.mapper})"
     )
+    if pipeline.last_effects:
+        sources = ", ".join(f"{key} by {mapper}" for key, mapper in pipeline.last_effects)
+        typer.echo(f"Light effects from {len(pipeline.last_effects)} human maps: {sources}")
     for res in result.difficulties:
         d = res.dmap
         typer.echo(
@@ -433,6 +460,68 @@ def data_build(
 
         for line in summary_lines(meta["stats"]):
             typer.echo(line)
+
+
+@lights_app.command("styles")
+def lights_styles(
+    dataset: Annotated[Path, typer.Argument(help="A built dataset (v1).")] = Path(
+        "data/processed_v1"
+    ),
+    k: int = typer.Option(5, min=2, max=8, help="Number of styles."),
+    workers: int = typer.Option(8, min=1),
+    limit: int | None = typer.Option(None, help="Only the first N maps (for a quick test)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Cluster the gold human lightshows into styles and write DATASET/light_styles.json.
+
+    Light training (version 2 light prompt) reads the labels from it, and the trainer
+    copies its style model (names, auto-pick, scene tables) into the checkpoint.
+    """
+    from bsmapper.lighting.style_build import STYLE_FILE, build
+
+    _setup_logging(verbose)
+    if not (dataset / "maps.parquet").is_file():
+        raise typer.BadParameter(f"{dataset} is not a built dataset", param_hint="DATASET")
+    out = build(dataset, k=k, workers=workers, limit=limit)
+    stats = out["model"]["stats"]
+    typer.echo(f"{stats['labelled']} of {stats['maps']} lightshows labelled; "
+               f"excluded: {stats['excluded']}")  # fmt: skip
+    for name, n in stats["sizes"].items():
+        typer.echo(f"  {name:<8} {n:5d}  {stats['descriptions'].get(name, '')}")
+    typer.echo(
+        f"auto-pick val accuracy {stats['auto_pick_val_accuracy']:.3f} "
+        f"(majority {stats['majority_val_accuracy']:.3f}, {stats['val_maps']} maps)"
+    )
+    typer.echo(f"wrote {dataset / STYLE_FILE}")
+
+
+@lights_app.command("effects")
+def lights_effects(
+    dataset: Annotated[Path, typer.Argument(help="A built dataset (v1).")] = Path(
+        "data/processed_v1"
+    ),
+    out: Annotated[
+        Path, typer.Option(help="Library folder (one subfolder per environment).")
+    ] = Path("checkpoints/light_effects"),
+    workers: int = typer.Option(8, min=1),
+    limit: int | None = typer.Option(None, help="Only the first N maps (for a quick test)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Store the dataset's human group lighting as an effect library (WS8c).
+
+    v3 lighting in an environment with a library re-uses these human effects instead of
+    the fixed box-group template. Generation finds the library in checkpoints/light_effects
+    or at [generate] light_effects in the config.
+    """
+    from bsmapper.lighting.effects_build import build
+
+    _setup_logging(verbose)
+    if not (dataset / "maps.parquet").is_file():
+        raise typer.BadParameter(f"{dataset} is not a built dataset", param_hint="DATASET")
+    counts = build(dataset, out, workers=workers, limit=limit)
+    for env, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {env:<30} {n:4d} maps")
+    typer.echo(f"wrote {len(counts)} environments to {out}")
 
 
 @app.command()

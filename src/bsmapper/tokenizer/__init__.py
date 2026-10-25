@@ -40,9 +40,16 @@ from bsmapper.tokenizer.grid import (
 )
 from bsmapper.tokenizer.lighting import (
     LIGHT_GRAMMAR,
+    LIGHT_PREFIX_LEN,
+    LIGHT_REF,
+    LIGHT_REF_END,
     LightingTokenizer,
+    LightPrompt,
     light_events,
+    light_input_ids,
+    light_prompt_ids,
     prepare_lightshow,
+    window_scene,
 )
 from bsmapper.tokenizer.notes import (
     NOTE_GRAMMAR,
@@ -54,13 +61,16 @@ from bsmapper.tokenizer.notes import (
 from bsmapper.tokenizer.vocab import (
     BOS,
     EOS,
+    LIGHT_TOKENIZER_VERSION,
     LIGHT_VOCAB,
+    LIGHT_VOCAB_SIZES,
     NOTE_VOCAB,
     NOTE_VOCAB_SIZES,
     PAD,
     SEP,
     TOKENIZER_VERSION,
     Vocab,
+    light_version_for_vocab,
     version_for_vocab,
 )
 from bsmapper.tokenizer.windows import (
@@ -78,7 +88,12 @@ __all__ = [
     "DEFAULT_MAX_REF_TOKENS",
     "EOS",
     "LIGHT_GRAMMAR",
+    "LIGHT_PREFIX_LEN",
+    "LIGHT_REF",
+    "LIGHT_REF_END",
+    "LIGHT_TOKENIZER_VERSION",
     "LIGHT_VOCAB",
+    "LIGHT_VOCAB_SIZES",
     "NOTE_GRAMMAR",
     "NOTE_VOCAB",
     "NOTE_VOCAB_SIZES",
@@ -93,6 +108,7 @@ __all__ = [
     "WINDOW_TICKS",
     "Conditioning",
     "Grammar",
+    "LightPrompt",
     "LightingTokenizer",
     "MapTokenizer",
     "ObjectSpec",
@@ -110,6 +126,9 @@ __all__ = [
     "intensity_bucket",
     "is_on_grid",
     "light_events",
+    "light_input_ids",
+    "light_prompt_ids",
+    "light_version_for_vocab",
     "map_events",
     "notes_per_second",
     "nps_bucket",
@@ -123,4 +142,5 @@ __all__ = [
     "tick_error",
     "tick_to_beat",
     "version_for_vocab",
+    "window_scene",
 ]
