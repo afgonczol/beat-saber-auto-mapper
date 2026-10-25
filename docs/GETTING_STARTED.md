@@ -18,6 +18,14 @@ cd G:\ClaudeProjects\beat-saber-auto-mapper
 bsmapper --help
 ```
 
+Lights in group-lighting environments re-use human lighting effects. Their library lives at
+`checkpoints\light_effects` and is built once from the dataset, which takes about 5 minutes.
+It is already built on this PC. To rebuild it:
+
+```powershell
+bsmapper lights effects data\processed_v1
+```
+
 If PowerShell refuses to run `Activate.ps1`, either run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or skip activation and call
 `.\.venv\Scripts\bsmapper.exe` directly.
@@ -51,7 +59,8 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 | `--light-style` | The look of the model's lights, with a `light_v2` checkpoint: `auto` (picked for the song; another seed may pick another), `pulse`, `calm`, `scenes`, `flash`, `accent`, or `none` (the model's own choice). | `--light-style calm` |
 | `--lighting-source` | `model` or `rules`. If the model's lights are too jittery for a song, `rules` gives a calmer, simpler show. | `--lighting-source rules` |
 | `--seed` | A different seed gives a different map for the same song. | `--seed 7` |
-| `--environment` | The Info.dat environment. | `--environment EDMEnvironment` |
+| `--environment` | The Info.dat environment. With the human effect library (below) the default is one of its environments, picked with the seed. | `--environment LizzoEnvironment` |
+| `--no-light-effects` | Use the old fixed group-lighting template instead of human effects. | `--no-light-effects` |
 
 Run `bsmapper generate --help` for everything.
 
@@ -113,6 +122,7 @@ it. For example:
 intensity = 0.8
 # repetition = 0.5
 # light_style = "auto"   # or pulse, calm, scenes, flash, accent, none (light_v2 checkpoints)
+# light_effects = 'G:\elsewhere\light_effects'   # default: checkpoints/light_effects
 # arcs = false     # true: arcs in every difficulty; false: none; unset: from Hard up
 # chains = false   # the same for chains (unset: from Expert up)
 # custom_levels = 'C:\Program Files (x86)\Steam\steamapps\common\Beat Saber\Beat Saber_Data\CustomLevels'

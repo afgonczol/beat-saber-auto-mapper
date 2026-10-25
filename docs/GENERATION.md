@@ -9,7 +9,7 @@ generator](#choosing-the-generator)):
 | analyze | WS2 analysis. The song is padded with `BeatGrid.lead_in_s()` of silence so the bar before the first downbeat starts at 0 s (Beat Saber's beat 0). Map beat = grid beat + beats per bar. `timing.song_time_analysis` shifts the analysis the same way, so generators see `beat_times[i]` = map beat `i`. |
 | generate | Per mode, every difficulty in one batch (`ModelGenerator.generate_many`), or one `NoteGenerator.generate` call each. Then from the hardest down: a difficulty at 95% or more of the next harder one's NPS is generated again at 80% of it, so NPS strictly rises. |
 | rules | `postprocess`: snap to the 24-tick grid, dedupe, replay through `bsmapper.rules` and repair (turn or flip a note, move it to a nearby cell, soften a rotation) or drop anything that breaks a hard rule. Then `fix_spans` re-anchors arcs and chains on the notes that are left (see [Arcs and chains](#arcs-and-chains)), and NJS and offset are set (`njs.JUMP_TABLE`). Warnings are kept for the UI. |
-| lighting | Model lighting (L1) when there is a model, else the WS8 L0 rule lightshow. Both render through WS8 (`lighting.render`), v3 group lighting by default (WeaveEnvironment). Any model failure falls back to L0. |
+| lighting | Model lighting (L1) when there is a model, else the WS8 L0 rule lightshow. Both render through WS8 (`lighting.render`), v3 group lighting by default. With a human effect library (`bsmapper lights effects`, WS8c) the environment is one of its environments and the box groups are human passages chosen per phrase; otherwise WeaveEnvironment with the profile template. Any model failure falls back to L0. |
 | package | WS1 `package_map`: padded `song.egg`, cover (embedded art or a placeholder), v3 difficulty files with a v2 Info.dat, zip. Title and artist come from the tags, else from an `Artist - Title` filename. |
 
 ```bash
@@ -187,6 +187,12 @@ What note_v1 adds:
   `ModelLightingGenerator` adds a section scene plan and light references. The pipeline
   then also computes chroma for a light-only model. v1 checkpoints ignore it. See
   [LIGHTING_V2.md](LIGHTING_V2.md) §5.
+- **`--light-effects / --no-light-effects`** (WS8c): `GenerateOptions.light_effects`. When
+  the pipeline has an effect library (`runtime.find_light_effects`: `[generate]
+  light_effects`, else `checkpoints/light_effects`), v3 lighting re-uses human group
+  lighting (`lighting.effects`). The decoded lights and the L0 sections pick and time the
+  human passages. `Pipeline.last_effects` lists the human maps used, and the CLI prints
+  them. See [LIGHTING.md](LIGHTING.md#human-effects-ws8c).
 - **Lighting**: from note_v1's lighting decoder (L1), through WS8's renderers with the
   rest pose and capped sweeps, and the L0 fallback. The note track it follows now gets
   the checkpoint's prefix layout. Before, a note_v0 checkpoint would have been handed
