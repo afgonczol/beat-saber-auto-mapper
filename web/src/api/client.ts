@@ -64,6 +64,7 @@ export async function createJob(audio: File, options: JobOptions): Promise<JobIn
   form.append("seed", String(options.seed ?? 0));
   if (options.intensity != null) form.append("intensity", String(options.intensity));
   if (options.repetition != null) form.append("repetition", String(options.repetition));
+  if (options.light_style != null) form.append("light_style", options.light_style);
   if (options.arcs != null) form.append("arcs", String(options.arcs));
   if (options.chains != null) form.append("chains", String(options.chains));
   if (options.njs != null) form.append("njs", String(options.njs));

@@ -265,7 +265,7 @@ code changes.
 | M2 | 🟡 v0 done, v1 downloaded | v0: 2,448 maps / 7,526 difficulties / 25.9M note tokens (#24). v1: 10,001 maps / 66 GB raw (#30), not processed yet |
 | M3 | 🟡 trained, not evaluated | `note_v0` (88.6M params, 60k steps): val note loss 1.563, acc 0.773, mild overfit. WS10 eval (#11) next |
 | M4 | 🟡 model playable | `note_v0` drives `generate` and the server (#29). First model playtest passed on timing and flow; density and reaction-time fixes are in progress (see below) |
-| M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28). note_v1 lighting decoder is the default (#35); WS8b readability limits and the LIGHTING_V2 design proposal are awaiting a playtest and a design choice |
+| M5 | 🟡 L0 done | Rule lightshow + vanilla/v3/Chroma renderers, calibrated (#20, #23); laser-blocking fix (#28). note_v1 lighting decoder is the default (#35); WS8b readability limits (#36). WS8b phase 2: style token + section scene plan, the `light_v2` lights-only fine-tune, trained 2026-10-24 and awaiting playtest (LIGHTING_V2.md §5) |
 | M6 | 🟡 awaiting playtest | WS6b (#12): arcs on from Hard up, arc/chain repair and rules, `rotation_step`. One Saber, 90° and 360° from note_v1 pass every rule check; no fine-tuning was needed so far |
 | M7 | 🟡 mostly done | UI shell (#21), real pipeline + install button (#25, #26) |
 | M8 | ⬜ not started | |
@@ -277,6 +277,7 @@ code changes.
 | 2026-10-21 | Stronger (stub notes, L0 v3 lights) | Loads in-game; inner lasers stuck at 60° and blocked the notes in the drop | Fixed in #28 (rest pose, 30° cap) |
 | 2026-10-22 | Stronger (`note_v0`, model lights) | Notes on the beat, swings flow well. **Expert too easy, long breaks**: 2.82 NPS vs a human median of 3.68. **Expert+ spawn-to-strike feels too fast**: NJS 18 / 0.6 s, which is the human median, but the user prefers more time | Density calibration + gap filling; `--reaction-time` option and a comfier default table (Expert+ NJS 17 / 0.70 s) |
 | 2026-10-23 | Stronger, Toxic (`note_v1`, model lights) | Notes "phenomenal". **Lights jitter**: the middle of Stronger is "very spastic". Diagnosis: v3 spin whips and laser sweep restarts (renderer), colour flips with no section plan (decoder), dark starts. Each human map has its own style, and one model mixes them | WS8b phase 1: renderer fixes, readability post-filter, dark-window fill; design options in [LIGHTING_V2.md](LIGHTING_V2.md), awaiting a choice |
+| 2026-10-24 | Stronger, Toxic (`note_v1`, PR #36 build) | "Arcs are great and lighting is way better." | WS8b phase 2: (a) style token + (b2) scene plan, approved |
 
 ## 7. Splitting work between agents
 

@@ -24,6 +24,9 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+LightStyle = Literal["auto", "none", "pulse", "calm", "scenes", "flash", "accent"]
+
+
 class JobOptions(BaseModel):
     """What to generate. Sent as multipart form fields next to the audio file."""
 
@@ -49,6 +52,11 @@ class JobOptions(BaseModel):
         le=1.0,
         description="How much repeated music reuses earlier patterns (note_v1): 0 = never, "
         "0.5 = the learned amount, 1 = twice as strongly; null = the configured default.",
+    )
+    light_style: LightStyle | None = Field(
+        default=None,
+        description="Look of model lights (light_v2 checkpoints): auto = picked for the song, "
+        "none = the model's choice, or a style; null = the configured default (else auto).",
     )
     arcs: bool | None = Field(
         default=None,

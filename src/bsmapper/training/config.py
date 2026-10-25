@@ -61,6 +61,15 @@ class DataConfig:
     empty_window_weight: float = 0.25  # windows with no objects (intros, breaks)
     lights_gold_only: bool = True
     hardest_notes_for_lights: float = 0.5  # else a random difficulty of the map
+    # Light prompt v2 (WS8b; a lighting decoder with the v2 light vocabulary).
+    # ``light_styles``: the ``bsmapper lights styles`` file, relative to ``root``. Without
+    # it every window gets LSTYLE_NONE.
+    light_styles: str | None = "light_styles.json"
+    light_labelled_only: bool = True  # train lights only on maps with a style label
+    light_style_dropout: float = 0.2  # LSTYLE -> LSTYLE_NONE
+    scene_dropout: float = 0.2  # all three scene tokens -> _NONE
+    light_ref_dropout: float = 0.3
+    max_light_ref_tokens: int = 384
     # Synthetic data (root: synthetic).
     synthetic_maps: int = 16
     synthetic_windows: int = 4
@@ -123,6 +132,11 @@ class RunConfig:
     # Denser snapshots early, when a run is most likely to blow up.
     early_save_every: int = 1000
     early_save_until: int = 10000
+    # Fine-tuning (WS8b): start a fresh run from this checkpoint's weights (vocabularies
+    # may grow; new rows are initialised), and freeze these top-level modules
+    # (``encoder``, ``notes``, ``note_memory``, ``lights``).
+    init_from: str | None = None
+    freeze: list[str] = field(default_factory=list)
     guard: GuardConfig = field(default_factory=lambda: GuardConfig())
 
 

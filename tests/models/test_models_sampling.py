@@ -21,6 +21,7 @@ from bsmapper.tokenizer import (  # noqa: E402
     NOTE_VOCAB,
     WINDOW_TICKS,
     Conditioning,
+    LightPrompt,
     MapTokenizer,
     tail_context,
 )
@@ -151,7 +152,7 @@ def test_light_sampler_follows_note_windows(model, features, tmp_path):
     assert len(lights) == len(notes)
     for w in lights:
         LIGHT_GRAMMAR.parse(w.body)
-        assert w.prefix == []
+        assert w.prefix == LightPrompt().prefix_ids()  # v2 light vocabulary: no preference
 
 
 def test_checkpoint_roundtrip(model, tmp_path):

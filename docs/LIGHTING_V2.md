@@ -1,7 +1,13 @@
-# Lighting v2: diagnosis and design proposal (WS8b, phase 1)
+# Lighting v2: diagnosis, design and the style + scene model (WS8b)
 
-Status: **proposal, waiting for a decision.** Phase 1 ships only the readability quick win
-(below). No lighting model has been retrained.
+Status:
+
+- **Phase 1** (#36, merged): diagnosis, style analysis, design options and the readability
+  quick win (§1–§4).
+- **Phase 2**: the user chose (a) + (b2) after playtesting phase 1 ("lighting is way
+  better"). §5 describes the light prompt v2 (style token + section scene plan + light
+  references) and the lights-only fine-tune `light_v2`: trained 2026-10-24, adherence
+  results and playtest maps in §5, awaiting the user's playtest.
 
 The user played note_v1 maps and reported: the notes are "phenomenal", but the lights
 "leave plenty to be desired". In Stronger, a section toward the middle is "very spastic
@@ -459,3 +465,183 @@ clustering):
 2. `human_bins.py` computes the energy-binned quantiles.
 3. `styles.py` runs the clustering.
 4. `gen_cache.py` and `diagnose.py` regenerate a song and compare it.
+
+## 5. Phase 2: style token and section scene plan (light_v2)
+
+Option (a) + (b2), keeping (c) as the safety net. The lighting decoder gets a prompt for
+the first time:
+
+```text
+BOS  LSTYLE_s LEVEL_l PAL_p FLIPS_f  [REF <light events> REF_END]  <tail>  SEP  <body>  EOS
+```
+
+- `LSTYLE_s`: the map's style (below). `LSTYLE_NONE` = no preference.
+- `LEVEL`, `PAL`, `FLIPS`: the window's *scene* (`tokenizer.lighting.window_scene`):
+  - `LEVEL_0..6`: light events per beat. Edges 0.5 / 2 / 4 / 7 / 12 / 24.
+  - `PAL`: the colour mix of lit events. `DARK`, `BLUE`, `BLUE_LEAD`, `EVEN`,
+    `RED_LEAD`, `RED` (red share edges 0.15 / 0.42 / 0.58 / 0.85), `WHITE` (≥ 25% white).
+  - `FLIPS_0..3`: the share of lit events that change their light's colour. Edges
+    0.05 / 0.15 / 0.3. This is the "constantly changing" axis.
+
+  Each has a `_NONE`. The edges come from the labelled gold windows of dataset v1: the
+  first cut (flips per beat, red share 0.1 / 0.4 / 0.6 / 0.9) put nearly every loud
+  window into one bucket.
+- `REF … REF_END`: the human (training) or generated (generation) light events of the
+  window's reference span: the same structure references note_v1 uses (`ref_threshold`
+  0.85), at most 384 tokens.
+
+The light vocabulary grows from 500 to 532 tokens. The new groups are appended, so v1
+checkpoints (note_v1) keep working and decode as before (`LIGHT_VOCAB_SIZES`,
+`light_version_for_vocab`).
+
+### Styles (`bsmapper lights styles`)
+
+`lighting.style_build` re-runs the phase 1 analysis inside the package and writes
+`data/processed_v1/light_styles.json`: style labels, the style model and the scene
+tables.
+
+- **Candidates:** 3,566 gold maps with a basic-event lightshow on one tempo.
+- **Left out:**
+  - 15 lightshows too sparse to describe;
+  - 1,023 **sequenced** ones (`styles.is_sequenced`).
+
+  A Chroma lightID sequence, once its lightIDs are dropped, shows as several events of
+  one light on the same tick. The share of such *stacked* events is bimodal on dataset
+  v1 (median 0.1%, p90 66%), so a map counts as sequenced when at least 10% of its light
+  events are stacked, or when 60% of its changes are strobes (under 0.1 s). Plain
+  Chroma colours without lightIDs are kept. Phase 1's "any Chroma colour" rule would
+  have dropped 23% of the maps, most of them fine.
+- **k-means with k = 5** on the 19 standardised style features of §2. The clusters are
+  named by matching them to prototype signatures (`styles.STYLE_PROTOTYPES`). They are
+  phase 1's clusters 0–4, minus the sequenced one:
+
+| Style | Maps | Look | Distinctive (z) |
+|---|---|---|---|
+| `pulse` | 1,163 (46%) | beat-pulsed fades with laser sweeps | laser speed +0.66, fade +0.54 |
+| `calm` | 549 (22%) | slow fade pulses, long holds, little laser motion | rate −1.10, hold +0.96 |
+| `flash` | 362 (14%) | fast flashes with ring zooms and spins | strobe +1.79, flash +1.15 |
+| `scenes` | 313 (12%) | sustained on/off scenes, few colour flips | on +1.98, fade −1.63 |
+| `accent` | 147 (6%) | white accents and colour boosts | white +2.87, boost +1.07 |
+
+- **Auto-pick:** a softmax regression from 18 song features (tempo, length, loudness
+  profile, onsets, mel profile) to style. It reaches 48% on the 250 val maps, against
+  44% for always guessing `pulse`. The audio barely determines the style, as the low
+  silhouette in §2 suggested. So `auto` *draws* a style from the predicted
+  probabilities with the generation seed, instead of always taking the top one: another
+  seed can give another look, and a fixed `--light-style` gives a fixed one.
+- **Scene tables:** how often each scene occurs in the human windows, per style and
+  per loudness bin (window RMS against the song's loudest window: edges 0.2 / 0.4 /
+  0.6 / 0.8).
+
+### Generation
+
+`ModelLightingGenerator` with a v2 checkpoint:
+
+1. **Style:** `light_style` is `auto`, `none` or a style name.
+2. **Scene plan** (`lighting.scenes.plan_scenes`): one scene per L0 section, held by
+   every window of the section.
+   - A section whose music repeats an earlier one (most of its windows' references
+     start there) reuses that section's scene.
+   - Any other section draws from the style's human scenes at the section's loudness.
+   - Loud sections (bin 2 and up) never draw a dark or near-dark scene. This fixes the
+     dark choruses of §1.
+   - Single-colour and lead palettes follow the L0 section's lead colour, so palettes
+     alternate between sections.
+   - Silent windows get a dark scene.
+3. **References:** each window's reference block holds the *generated* lights of its
+   reference span (`WindowRefs` on the light grammar).
+4. The readability post-filter (§4) still runs afterwards, unchanged.
+
+Options:
+
+- the CLI: `bsmapper generate --light-style auto|none|pulse|calm|scenes|flash|accent`;
+- the config: `[generate] light_style`;
+- the jobs API and the web UI: `light_style`, the "Light style" menu under Lighting.
+
+The default is `auto`. A v1 checkpoint ignores the option.
+
+### Fine-tune (`configs/light_v2.yaml`)
+
+- **Init:** note_v1's `best.pt`. The light embedding grows to 532 rows; the new rows
+  start at the mean embedding (`models.checkpoint.load_weights`).
+- **Frozen:** the audio encoder and the note decoder (`run.freeze`). The checkpoint
+  therefore generates exactly note_v1's notes. The note memory and the lighting decoder
+  train.
+- **Data:**
+  - labelled gold maps only (`light_labelled_only`);
+  - dropout 0.2 on the style and 0.2 on the scene (all three tokens), 0.3 on the
+    reference;
+  - up to 1,536 tokens per example.
+- **Optimiser:** lr 1e-4 with 1k warmup, cosine to 1e-5, batch 32, z-loss.
+- **Run:** the divergence guard, and the detached run with a watchdog of note_v1
+  (`checkpoints/light_v2/code/control.py start|stop|status`). `best.pt` is chosen on
+  val light loss.
+
+`light_v2` is **not** the default checkpoint until the user has playtested it. Use
+`--model checkpoints/light_v2/best.pt` or `[model] checkpoint` in the config.
+
+### Training run (2026-10-24)
+
+- 30k steps in 2 h 54 min, with no guard events.
+- Val light loss:
+  - It reached its low within the first 1k steps (1.425), stayed flat to step 10k, then
+    crept up to 1.438 by step 30k while light accuracy kept rising (80.2% → 80.5%).
+  - `best.pt` is step 6000 (1.424).
+  - This loss is not comparable with note_v1's 1.45: the v2 val windows include prompt
+    tokens.
+- Most of the gain comes from the prompt and the light references. Training past ~10k
+  steps only sharpens the distribution.
+
+### Adherence (`scripts/lighting_v2/phase2_eval.py`, 8 val maps, seed 0)
+
+Each map's lights are decoded on its human audio and Expert+ notes, once per condition.
+
+- **Measures:**
+  - The generated show is labelled with the style model.
+  - Changes/s and flips/s are medians over loud windows.
+  - "Dark" counts loud windows with fewer than 0.5 changes/s.
+  - The scene match is the share of windows within ±1 level bucket / with the same palette
+    / within ±1 flip bucket of the map's human scenes.
+- **No filter:** the readability filter of §4 is *not* applied here.
+
+| Condition | Changes/s | Flips/s | Dark | Style hits | Scene match (level / palette / flips) |
+|---|---|---|---|---|---|
+| human | 9.8 | 3.0 | 0 | | |
+| note_v1 | 10.6 | 1.3 | 3 | | 0.67 / 0.29 / 0.49 |
+| light_v2, no prompt | 7.3 | 2.5 | 1 | | 0.66 / 0.38 / 0.75 |
+| light_v2, `pulse` | 8.5 | 3.1 | 0 | 5/8 (none: 3/8) | 0.78 / 0.39 / 0.74 |
+| light_v2, `flash` | 11.0 | 3.2 | 0 | 1/8 (none: 0/8) | 0.70 / 0.39 / 0.66 |
+| light_v2, `scenes` | 6.9 | 2.4 | 5 | 4/8 (none: 1/8) | 0.56 / 0.43 / 0.66 |
+| light_v2, `accent` | 9.0 | 3.1 | 0 | 1/8 (none: 1/8) | 0.73 / 0.53 / 0.79 |
+| light_v2, `calm` | 6.2 | 2.4 | 16 | 4/8 (none: 3/8) | 0.78 / 0.42 / 0.72 |
+| light_v2, human style + scenes | 9.9 | 3.2 | 0 | 4/8 (own label) | 0.77 / 0.44 / 0.78 |
+
+- **The style token works, but weakly.** It moves the show in the intended direction:
+  `flash` is the busiest, `calm` and `scenes` the sparsest. `pulse` and `scenes` clearly
+  raise their own label.
+  - `flash` and `accent`, the two rarest styles (362 and 147 maps), barely register.
+  - Audio still decides most of the look: per map, the generated style often stays the
+    same across all five requests.
+- **Scenes help.** With the human scenes as the plan, every axis matches better than
+  note_v1, the most on palette (0.29 → 0.44) and flips (0.49 → 0.78). Density and flips
+  then come out at the human level (9.9 / 3.2 vs 9.8 / 3.0).
+- **Style alone can go dark.** `calm` or `scenes` without a scene produce dark loud
+  windows. In generation the scene plan forbids dark scenes in loud sections, and the
+  readability filter fills dark windows, so the playtest maps had at most one filled
+  window.
+- **Colour flips:** note_v1 flips colours less than humans (1.3 vs 3.0 per second on loud
+  windows). light_v2 follows the requested scene's flip bucket instead. A sustained,
+  low-flip look therefore needs a low-flip scene or the `scenes` style; the §4 caps still
+  apply on top.
+- **Caveat:** these are 8 maps and one seed, so treat the hit rates as indicative only.
+- **Possible follow-up:** classifier-free guidance on the style
+  (`ModelLightingGenerator(style_guidance=…)`, already implemented, default 1.0) could
+  strengthen the rare styles.
+
+### Playtest maps
+
+`out/light_v2_playtest/` has Stronger and Toxic, each with `--light-style` auto, calm,
+scenes and flash (seed 0). The subtitle in-game shows `lights <style>`.
+
+- Auto picked `accent` for Stronger and `flash` for Toxic.
+- The notes are identical across variants; they come from the frozen note_v1 decoder.

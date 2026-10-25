@@ -176,6 +176,18 @@ It keeps the most important moments first: downbeats, then beats, then half beat
 strobes, pattern repetition and v3 rotation speed. [LIGHTING_V2.md](LIGHTING_V2.md) has the
 diagnosis, the human reference numbers and the design options for the next lighting model.
 
+## Styles and scene plans (WS8b phase 2)
+
+The v2 light prompt conditions the lighting decoder on a style and a per-window scene:
+
+- `lighting.styles`: style features, the `StyleModel` (k-means styles `pulse`, `calm`,
+  `flash`, `scenes`, `accent`, an auto-pick from song features, and scene tables);
+- `lighting.style_build` and `bsmapper lights styles DATASET`: label a dataset;
+- `lighting.scenes.plan_scenes`: one scene per L0 section at generation.
+
+Readability limits still run after the model. [LIGHTING_V2.md](LIGHTING_V2.md) §5 has the
+details and the `light_v2` fine-tune.
+
 ## Open points
 
 - **In-game check.** Done means the lightshow is visibly synced in-game for all three

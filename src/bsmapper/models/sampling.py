@@ -28,6 +28,12 @@ when ``ref_fn`` gives one, a reference block ``REF <events> REF_END`` built from
 already generated windows (``WindowRefs``). ``SamplingOptions.repetition_guidance``
 scales the reference's effect by classifier-free guidance against the same prompt
 without the block.
+
+Lighting follows the lighting decoder's own vocabulary version. Version 1 (note_v0,
+note_v1) decodes ``BOS tail SEP`` as before. Version 2 (WS8b) prompts each window with a
+``LightPrompt`` (style and scene, ``prompts``) and, when ``ref_fn`` gives one, a light
+reference block; ``style_guidance`` applies classifier-free guidance against the same
+prompt with ``LSTYLE_NONE``.
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ from bsmapper.tokenizer import (
     DEFAULT_MAX_REF_TOKENS,
     EOS,
     LIGHT_GRAMMAR,
+    LIGHT_TOKENIZER_VERSION,
     NOTE_GRAMMAR,
     PAD,
     REF,
@@ -53,8 +60,11 @@ from bsmapper.tokenizer import (
     WINDOW_TICKS,
     Conditioning,
     Grammar,
+    LightPrompt,
     Parser,
     TokenWindow,
+    light_prompt_ids,
+    light_version_for_vocab,
     span_tokens,
     tail_context,
     version_for_vocab,
@@ -374,6 +384,12 @@ class LightSampler:
         self.model = model.eval()
         self.device = torch.device(device) if device else next(model.parameters()).device
         self._decoder = _WindowDecoder(model.lights, LIGHT_GRAMMAR, self.device)
+        self.version = light_version_for_vocab(model.cfg.light_vocab)
+
+    @property
+    def supports_prompts(self) -> bool:
+        """Does the lighting decoder take a style / scene prompt and references (v2)?"""
+        return self.version >= LIGHT_TOKENIZER_VERSION
 
     @torch.no_grad()
     def generate(
@@ -382,12 +398,21 @@ class LightSampler:
         note_windows: Sequence[TokenWindow],
         options: SamplingOptions | None = None,
         mask_fn: MaskFn | None = None,
+        prompts: Sequence[LightPrompt] | None = None,
+        ref_fn: RefFn | None = None,
+        style_guidance: float = 1.0,
     ) -> list[TokenWindow]:
+        """Light windows following ``note_windows``. ``prompts`` (one per window) and
+        ``ref_fn`` (light references from the generated windows, e.g. ``WindowRefs(starts,
+        grammar=LIGHT_GRAMMAR)``) only apply to a version 2 lighting decoder."""
         opts = options or SamplingOptions()
         feats = pad_features(features, len(note_windows))
         rng = np.random.default_rng(opts.seed)
         mem_len = self.model.cfg.note_memory_len
+        if not self.supports_prompts:
+            prompts, ref_fn = None, None
         out: list[TokenWindow] = []
+        history: list[list[int]] = []
         prev: list[int] = []
         for k, nw in enumerate(note_windows):
             window = feats[k * WINDOW_TICKS : (k + 1) * WINDOW_TICKS]
@@ -397,10 +422,36 @@ class LightSampler:
             note_tokens = torch.as_tensor([notes], dtype=torch.long, device=self.device)
             memory, valid = self.model.light_memory(audio, note_tokens)
             context = tail_context(prev, LIGHT_GRAMMAR, opts.context_events) if k else []
+            if not self.supports_prompts:
+                (body,) = self._decoder.run(
+                    memory, valid, [[BOS, *context, SEP]], k, opts, rng, mask_fn
+                )
+                out.append(TokenWindow(k, body, context))
+                prev = body
+                continue
+            prompt = prompts[k] if prompts is not None and k < len(prompts) else LightPrompt()
+            prefix = prompt.prefix_ids()
+            ref = ref_fn(k, 0, history) if ref_fn is not None else None
+            batch = [light_prompt_ids(prefix, ref, context)]
+            guidance = []
+            if style_guidance != 1.0 and prompt.style is not None:
+                guidance.append((0, 1, style_guidance))
+                batch.append(light_prompt_ids(prompt.drop_style().prefix_ids(), ref, context))
+            n = len(batch)
             (body,) = self._decoder.run(
-                memory, valid, [[BOS, *context, SEP]], k, opts, rng, mask_fn
+                memory.expand(n, -1, -1),
+                valid.expand(n, -1),
+                batch,
+                k,
+                opts,
+                rng,
+                mask_fn,
+                guidance,
             )
-            out.append(TokenWindow(k, body, context))
+            # The light prompt is kept as the window's prefix; its reference block is not
+            # (``TokenWindow.ref_block`` writes note-vocabulary REF tokens).
+            out.append(TokenWindow(k, body, context, prefix))
+            history.append(body)
             prev = body
         return out
 
