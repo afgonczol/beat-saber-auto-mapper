@@ -160,9 +160,9 @@ def _difficulty(dmap: DifficultyMap, timing, checker) -> tuple[dict, DifficultyM
     snapped, rep = snap_map(dmap)
     hit_beats = np.array([o.beat for o in (*dmap.notes, *dmap.bombs)], dtype=np.float64)
     timing_map = timing.beatmap()
-    # The arc, chain and wall box-in rules (#12) are for generated maps; leave them out so
-    # the dataset filter stays what datasets v0 and v1 were built with.
-    later = {*SPAN_RULES, "wall_boxin"}
+    # The arc, chain, wall box-in and stack alignment rules are for generated maps; leave
+    # them out so the dataset filter stays what datasets v0 and v1 were built with.
+    later = {*SPAN_RULES, "wall_boxin", "stack_alignment"}
     issues = [i for i in checker.check(snapped, timing_map) if i.rule not in later]
     errors = [i for i in issues if i.severity == "error"]
     per100 = max(len(snapped.notes), 1) / 100.0

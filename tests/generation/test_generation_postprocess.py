@@ -87,6 +87,15 @@ def test_parity_break_is_repaired() -> None:
     assert errors(out) == []
 
 
+def test_misaligned_stack_is_repaired() -> None:
+    # Maneater Expert playtest: two reds side by side, both pointing up.
+    m = dmap(Note(57.0, 2, 2, R, U), Note(57.0, 3, 2, R, U))
+    assert {i.rule for i in errors(m)} == {"stack_alignment"}
+    out, report = postprocess(m, beatmap())
+    assert report.errors == []
+    assert "stack_alignment" not in {i.rule for i in issues(out)}
+
+
 def test_unfixable_objects_are_dropped() -> None:
     # Far too many notes for Expert's NPS ceiling: the overflow goes.
     notes = [Note(4 + i / 8, i % 4, i % 3, Color(i % 2), CutDirection.ANY) for i in range(200)]

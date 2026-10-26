@@ -424,6 +424,16 @@ class MapState:
 
         if last is not None and t - last.last_s <= p.merge_window_s + 1e-9:
             if self._mergeable(last, note, cut):
+                off = self._off_axis(last.last, note, cut)
+                if off > p.stack_max_off_axis_deg + 1e-6 and self._on("stack_alignment"):
+                    issues.append(
+                        self._issue(
+                            "stack_alignment",
+                            note.beat,
+                            f"{hand} hand: notes of one swing lie {off:.0f}° off the cut "
+                            f"(max {p.stack_max_off_axis_deg:g}°)",
+                        )
+                    )
                 swing = replace(last, last_beat=note.beat, last_s=t, last=note)
                 if last.angle is None and cut is not None:
                     after, problem = self._parity_step(
@@ -539,6 +549,15 @@ class MapState:
             return False
         vx, vy = cut_vector(last.angle)
         return (note.x - last.last.x) * vx + (note.y - last.last.y) * vy > 0.5
+
+    @staticmethod
+    def _off_axis(prev: Note, note: Note, cut: float | None) -> float:
+        """Degrees between the cut axis and the line from ``prev`` to ``note`` (0 for dots)."""
+        dx, dy = note.x - prev.x, note.y - prev.y
+        if cut is None or cut_angle(prev) is None or (dx == 0 and dy == 0):
+            return 0.0
+        vx, vy = cut_vector(cut)
+        return math.degrees(math.acos(min(1.0, abs(dx * vx + dy * vy) / math.hypot(dx, dy))))
 
     def _mergeable(self, last: _Swing, note: Note, cut: float | None) -> bool:
         """Does ``note`` continue the hand's current swing (stack, window or slider)?"""
