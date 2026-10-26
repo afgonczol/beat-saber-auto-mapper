@@ -16,6 +16,7 @@ default:
     vision_block: warning
     crossover: error
     note_in_wall: error
+    note_behind_wall: error
     nps_ceiling: error
     wall_duration: warning
     dodge_gap: error
@@ -61,6 +62,7 @@ default:
     min_dodge_gap_s: 0.15
     min_dodge_duration_s: 0.1
     boxin_window_s: 0.3
+    min_note_gap_s: 0.2
   rotation:
     window_s: 1.0
     max_swing_deg: 90

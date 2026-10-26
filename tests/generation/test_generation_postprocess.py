@@ -96,6 +96,15 @@ def test_misaligned_stack_is_repaired() -> None:
     assert "stack_alignment" not in {i.rule for i in issues(out)}
 
 
+def test_note_behind_wall_is_moved() -> None:
+    # Drop It Like It's Hot Expert: a top-row note right after a wall left its cell.
+    m = dmap(Note(41.5, 1, 2, R, U), obstacles=[Obstacle(41.125, 0.125, 1, 2, 1, 3)])
+    assert {i.rule for i in errors(m)} == {"note_behind_wall"}
+    out, report = postprocess(m, beatmap())
+    assert report.errors == []
+    assert "note_behind_wall" not in {i.rule for i in issues(out)}
+
+
 def test_unfixable_objects_are_dropped() -> None:
     # Far too many notes for Expert's NPS ceiling: the overflow goes.
     notes = [Note(4 + i / 8, i % 4, i % 3, Color(i % 2), CutDirection.ANY) for i in range(200)]

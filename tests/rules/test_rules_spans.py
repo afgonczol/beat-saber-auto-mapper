@@ -70,7 +70,7 @@ def test_arc_too_long():
 
 
 def test_arc_through_a_wall():
-    wall = Obstacle(0.25, 0.5, 0, 0, 2, 3)  # columns 0-1, full height, beats 0.25-0.75
+    wall = Obstacle(0.25, 0.25, 0, 0, 2, 3)  # columns 0-1, full height, beats 0.25-0.5
     assert rules_of(arcs=[ARC], obstacles=[wall]) == ["arc_wall"]
     assert rules_of(arcs=[ARC], obstacles=[Obstacle(0.25, 0.5, 3, 0, 1, 3)]) == []
 
