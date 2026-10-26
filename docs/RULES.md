@@ -7,6 +7,7 @@ rules are hard constraints (decode masks), **warning** rules are only reported.
 | Rule | Severity | What it catches |
 |---|---|---|
 | `parity` | error | Same-hand swings that need a reset: a repeated direction (turn < 60°), a cut the wrist can't reach with the expected forehand/backhand, or two same-hand notes at one time that point different ways |
+| `stack_alignment` | error | Notes of one swing (a stack, window or slider) that don't lie along the cut: the line between them more than 30° off the cut axis, e.g. two notes side by side that both point up |
 | `swing_interval` | error | Same-hand swings closer than the difficulty's minimum (Easy 180 ms … Expert+ 80 ms) |
 | `swing_speed` | warning | Saber travel between swings above the difficulty's cells/s ceiling |
 | `same_cell` | error | Two objects in one cell at the same time |
@@ -43,6 +44,20 @@ of the opposite direction. On top of that:
 
 The checker tracks the *set* of parities each hand could be in, so it only reports a break
 when no reading of the map avoids one.
+
+## Stacks
+
+A stack, window or slider is one swing, so its notes have to lie along the cut. A
+playtest of a generated Maneater Expert had two reds side by side, both pointing up,
+which no swing hits cleanly. `stack_alignment` measures the angle between the cut axis
+and the line from one note of the swing to the next, and flags more than 30°. A knight
+move under a straight cut is 26.6° and passes; a diagonal pair under a straight cut is 45°.
+
+Calibrated on 38,123 same-hand pairs (both arrows, at most 45° apart, within 90 ms) in
+1,530 human Standard Hard/Expert/Expert+ difficulties (800 maps): all but 4 lie within
+30°, none between 30° and 90°. The 4 are side-by-side pairs in one Expert+ map (0.07% of
+difficulties). In 69 generated difficulties, 6 (8.7%) had a pair over 30°. Generation
+repairs the later note (another direction or cell) or drops it (`fix_with_rules`).
 
 ## Walls
 

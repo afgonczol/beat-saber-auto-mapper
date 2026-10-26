@@ -22,6 +22,7 @@ DEFAULT_THRESHOLDS = Path(__file__).with_name("thresholds.yaml")
 # Every rule name an Issue can carry. "error" rules are the hard decode masks.
 RULES = (
     "parity",
+    "stack_alignment",
     "swing_interval",
     "swing_speed",
     "same_cell",
@@ -63,6 +64,9 @@ class ParityConfig:
     merge_window_s: float = 0.09
     # Max turn between consecutive notes of one slider/stack.
     slider_max_turn_deg: float = 45.0
+    # Notes of one stack/slider must lie along the cut: the line between them at most this
+    # far off the cut axis (a knight-move stack is 26.6°, side by side under an UP is 90°).
+    stack_max_off_axis_deg: float = 30.0
     # A gap this long lets the player reset the hand, so parity starts over.
     reset_gap_s: float = 1.0
     # Bombs within this many columns of the hand, between two swings, allow a reset.

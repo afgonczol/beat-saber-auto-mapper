@@ -8,6 +8,7 @@
 default:
   severity:
     parity: error
+    stack_alignment: error
     swing_interval: error
     swing_speed: warning
     same_cell: error
@@ -36,6 +37,7 @@ default:
     allow_continuation: true
     merge_window_s: 0.09
     slider_max_turn_deg: 45
+    stack_max_off_axis_deg: 30
     reset_gap_s: 0.6
     bomb_reset_columns: 1
     dots_flip_parity: false

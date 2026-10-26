@@ -90,6 +90,19 @@ def test_parity_stack_and_slider_are_one_swing():
     assert rules_of([*slider, red(0.75, 1, 1, D.UP)]) == set()
 
 
+def test_stack_alignment():
+    # The Maneater Expert playtest case: two reds side by side, both pointing up.
+    assert rules_of([red(0, 2, 2, D.UP), red(0, 3, 2, D.UP)]) == {"stack_alignment"}
+    assert rules_of([red(0, 0, 0, D.DOWN), red(0, 1, 1, D.DOWN)]) == {"stack_alignment"}  # 45°
+    assert rules_of([red(0, 0, 1, D.DOWN), red(0, 1, 0, D.DOWN)]) == {"stack_alignment"}
+    assert rules_of([red(0, 2, 2, D.LEFT), red(0, 3, 2, D.LEFT)]) == set()
+    assert rules_of([red(0, 0, 1, D.DOWN_LEFT), red(0, 1, 2, D.DOWN_LEFT)]) == set()
+    assert rules_of([red(0, 0, 0, D.DOWN), red(0, 1, 2, D.DOWN)]) == set()  # knight, 26.6°
+    assert rules_of([red(0, 0, 0, D.ANY), red(0, 1, 0, D.ANY)]) == set()
+    slider = [red(0, 1, 2, D.DOWN), red(0.0625, 2, 2, D.DOWN)]  # sideways "slider"
+    assert rules_of(slider) == {"stack_alignment"}
+
+
 def test_parity_same_time_opposite_directions():
     assert "parity" in rules_of([red(0, 0, 0, D.DOWN), red(0, 0, 2, D.UP)])
 
