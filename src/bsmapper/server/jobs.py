@@ -1,10 +1,17 @@
-"""In-memory job table and the single worker thread (one GPU, one job at a time)."""
+"""In-memory job table and the single worker thread (one GPU, one job at a time).
+
+Jobs run in the order they were queued; the queue has no size limit, so a batch of songs can
+be queued at once. Queued jobs can be cancelled or removed; a running job is cancelled at its
+next progress report. Jobs live as long as the server process (a page reload finds them
+again with ``GET /api/jobs``).
+"""
 
 from __future__ import annotations
 
 import logging
 import queue
 import re
+import shutil
 import threading
 import uuid
 from collections.abc import Callable
@@ -13,7 +20,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
+from bsmapper.server.install import MapNotReady, install_job
 from bsmapper.server.models import (
+    InstallResult,
     JobEvent,
     JobInfo,
     JobOptions,
@@ -26,11 +35,25 @@ from bsmapper.server.runner import JobInput, JobResult, JobRunner
 log = logging.getLogger(__name__)
 
 AUDIO_SUFFIXES = (".mp3", ".ogg", ".egg", ".wav", ".flac", ".m4a", ".aac", ".opus")
-TERMINAL = (JobStatus.DONE, JobStatus.FAILED)
+TERMINAL = (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
+
+Installer = Callable[[JobInput, JobResult], InstallResult]
 
 
 class JobBusyError(RuntimeError):
     """The job is queued or running, so it cannot be changed right now."""
+
+
+class JobNotActiveError(RuntimeError):
+    """The job is not queued or running, so there is nothing to cancel."""
+
+
+class JobCancelled(BaseException):  # noqa: N818 - control flow, not an error
+    """Raised from a running job's progress callback once it is cancelled.
+
+    A ``BaseException``, like ``asyncio.CancelledError``: the pipeline's ``except Exception``
+    fallbacks must not swallow it.
+    """
 
 
 @dataclass(slots=True)
@@ -39,7 +62,12 @@ class Job:
     input: JobInput
     result: JobResult | None = None
     events: list[JobEvent] = field(default_factory=list)
-    lock: threading.Lock = field(default_factory=threading.Lock)
+    # Reentrant: status changes are emitted while the checks that allow them still hold.
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    # The queued or running run; a queue item with another run_id was cancelled.
+    active_run: int | None = None
+    runs: int = 0
+    cancel_requested: bool = False
 
     def events_after(self, seq: int) -> list[JobEvent]:
         with self.lock:
@@ -59,30 +87,51 @@ class Job:
         )
 
 
+@dataclass(slots=True)
+class _Run:
+    job: Job
+    fn: Callable[[], JobResult]
+    run_id: int
+    first: bool  # the first generation (not a regenerate): install it if asked to
+
+
 class JobManager:
-    def __init__(self, runner: JobRunner, work_dir: Path) -> None:
+    def __init__(
+        self, runner: JobRunner, work_dir: Path, installer: Installer = install_job
+    ) -> None:
         self.runner = runner
         self.work_dir = Path(work_dir)
-        self.jobs: dict[str, Job] = {}
-        self._queue: queue.Queue[tuple[Job, Callable[[], JobResult]] | None] = queue.Queue()
+        self.installer = installer
+        self.jobs: dict[str, Job] = {}  # in the order they were submitted
+        self._jobs_lock = threading.Lock()
+        self._queue: queue.Queue[_Run | None] = queue.Queue()
         self._worker: threading.Thread | None = None
+        self._stopping = threading.Event()
 
     # --- lifecycle ---------------------------------------------------------------------
 
     def start(self) -> None:
         if self._worker is None or not self._worker.is_alive():
+            self._stopping.clear()
             self._worker = threading.Thread(target=self._work, name="bsmapper-jobs", daemon=True)
             self._worker.start()
 
     def stop(self) -> None:
         if self._worker is not None and self._worker.is_alive():
+            self._stopping.set()  # finish the running job, leave the rest of the queue
             self._queue.put(None)
             self._worker.join(timeout=5)
         self._worker = None
 
     # --- API -------------------------------------------------------------------------
 
-    def submit(self, filename: str, data: BinaryIO, options: JobOptions) -> Job:
+    def submit(
+        self,
+        filename: str,
+        data: BinaryIO,
+        options: JobOptions,
+        install_when_done: bool = False,
+    ) -> Job:
         suffix = Path(filename).suffix.lower()
         if suffix not in AUDIO_SUFFIXES:
             raise ValueError(f"unsupported audio type {suffix or '(none)'}")
@@ -102,11 +151,15 @@ class JobManager:
             created_at=datetime.now(UTC),
             filename=Path(filename).name,
             options=options,
+            install_when_done=install_when_done,
         )
         job = Job(info, JobInput(job_id, audio, job_dir, options))
-        self.jobs[job_id] = job
+        run_id = self._claim_run(job)
         self._emit(job, "status", status=JobStatus.QUEUED, message="Queued")
-        self._enqueue(job, lambda: self.runner.run(job.input, self._progress_fn(job)))
+        with self._jobs_lock:
+            self.jobs[job_id] = job
+        run = lambda: self.runner.run(job.input, self._progress_fn(job))  # noqa: E731
+        self._put(job, run, run_id, first=True)
         return job
 
     def regenerate(self, job: Job, request: RegenerateRequest) -> None:
@@ -114,46 +167,135 @@ class JobManager:
             if job.info.status not in TERMINAL or job.result is None:
                 raise JobBusyError("job has no finished map to regenerate")
             previous = job.result
-        self._emit(
-            job,
-            "status",
-            status=JobStatus.QUEUED,
-            message=f"Regenerate {request.characteristic} {request.difficulty} queued",
-        )
-        self._enqueue(
+            run_id = self._claim_run(job)
+            self._emit(
+                job,
+                "status",
+                status=JobStatus.QUEUED,
+                message=f"Regenerate {request.characteristic} {request.difficulty} queued",
+            )
+        self._put(
             job,
             lambda: self.runner.regenerate(job.input, previous, request, self._progress_fn(job)),
+            run_id,
+            first=False,
         )
+
+    def cancel(self, job: Job) -> None:
+        """Drop a queued run, or stop a running one at its next progress report."""
+        with job.lock:
+            status = job.info.status
+            if status == JobStatus.RUNNING:
+                job.cancel_requested = True
+                self._emit(job, "progress", status=JobStatus.RUNNING, message="Cancelling…")
+            elif status == JobStatus.QUEUED:
+                job.active_run = None
+                self._emit_cancelled(job)
+            else:
+                raise JobNotActiveError(f"job is {status}, not queued or running")
+
+    def remove(self, job: Job) -> None:
+        """Forget a job that is not running (dropping it from the queue) and delete its files."""
+        with job.lock:
+            if job.info.status == JobStatus.RUNNING:
+                raise JobBusyError("job is running; cancel it first")
+            job.active_run = None
+        with self._jobs_lock:
+            self.jobs.pop(job.info.id, None)
+        shutil.rmtree(job.input.work_dir, ignore_errors=True)
+
+    def install(self, job: Job) -> InstallResult:
+        """Copy the finished map into the game (``MapNotReady`` if there is none yet)."""
+        with job.lock:
+            result = job.result if job.info.status in TERMINAL else None
+        if result is None:
+            raise MapNotReady("map not ready")
+        return self._install(job, result)
 
     def get(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
+    def all(self) -> list[Job]:
+        """Every job, oldest first (the order they run in)."""
+        with self._jobs_lock:
+            return list(self.jobs.values())
+
     # --- internals --------------------------------------------------------------------
 
-    def _enqueue(self, job: Job, fn: Callable[[], JobResult]) -> None:
+    def _claim_run(self, job: Job) -> int:
+        """Make a new run the job's active one (with ``job.lock`` held once others see it)."""
+        job.runs += 1
+        job.active_run = job.runs
+        job.cancel_requested = False
+        return job.runs
+
+    def _put(self, job: Job, fn: Callable[[], JobResult], run_id: int, first: bool) -> None:
         self.start()
-        self._queue.put((job, fn))
+        self._queue.put(_Run(job, fn, run_id, first))
 
     def _work(self) -> None:
-        while (item := self._queue.get()) is not None:
-            job, fn = item
-            self._emit(job, "status", status=JobStatus.RUNNING, message="Started")
-            try:
-                result = fn()
-            except Exception as exc:  # report any runner failure on the job, keep serving
-                log.exception("job %s failed", job.info.id)
-                with job.lock:
-                    job.info.error = str(exc) or type(exc).__name__
-                self._emit(job, "status", status=JobStatus.FAILED, message=job.info.error or "")
-                continue
+        while (item := self._queue.get()) is not None and not self._stopping.is_set():
+            job = item.job
             with job.lock:
-                job.result = result
-                job.info.revision += 1
-                job.info.error = None
-            self._emit(job, "status", status=JobStatus.DONE, progress=1.0, message="Done")
+                if job.active_run != item.run_id:  # cancelled or removed while queued
+                    continue
+                self._emit(job, "status", status=JobStatus.RUNNING, message="Started")
+            self._run(item)
+
+    def _run(self, item: _Run) -> None:
+        job = item.job
+        try:
+            result = item.fn()
+        except JobCancelled:
+            with job.lock:
+                job.active_run = None
+            self._emit_cancelled(job)
+            return
+        except Exception as exc:  # report any runner failure on the job, keep serving
+            log.exception("job %s failed", job.info.id)
+            with job.lock:
+                job.active_run = None
+                job.info.error = str(exc) or type(exc).__name__
+            self._emit(job, "status", status=JobStatus.FAILED, message=job.info.error or "")
+            return
+        with job.lock:
+            job.result = result
+            job.info.revision += 1
+            job.info.error = None
+            job.info.installed = job.info.install_error = None  # the game has the old map
+            job.active_run = None
+            auto_install = item.first and job.info.install_when_done
+        message = "Done"
+        if auto_install:
+            self._emit(job, "progress", status=JobStatus.RUNNING, message="Installing to game")
+            try:
+                self._install(job, result)
+                message = "Done, installed to the game"
+            except Exception as exc:  # the map is fine; say why it is not in the game
+                log.warning("job %s: install failed: %s", job.info.id, exc)
+                with job.lock:
+                    job.info.install_error = str(exc) or type(exc).__name__
+                message = f"Done, but installing failed: {job.info.install_error}"
+        self._emit(job, "status", status=JobStatus.DONE, progress=1.0, message=message)
+
+    def _install(self, job: Job, result: JobResult) -> InstallResult:
+        installed = self.installer(job.input, result)
+        with job.lock:
+            job.info.installed = installed
+            job.info.install_error = None
+        return installed
+
+    def _emit_cancelled(self, job: Job) -> None:
+        # A cancelled regenerate keeps the earlier map, so the job stays done.
+        if job.result is None:
+            self._emit(job, "status", status=JobStatus.CANCELLED, message="Cancelled")
+        else:
+            self._emit(job, "status", status=JobStatus.DONE, progress=1.0, message="Cancelled")
 
     def _progress_fn(self, job: Job):
         def progress(stage: str, fraction: float, message: str = "") -> None:
+            if job.cancel_requested:
+                raise JobCancelled
             self._emit(
                 job,
                 "progress",

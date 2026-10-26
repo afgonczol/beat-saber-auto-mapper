@@ -22,6 +22,7 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 LightStyle = Literal["auto", "none", "pulse", "calm", "scenes", "flash", "accent"]
@@ -80,6 +81,13 @@ class JobOptions(BaseModel):
     )
 
 
+class InstallResult(BaseModel):
+    path: str = Field(description="The installed map folder inside CustomLevels.")
+    warnings: list[str] = Field(
+        default=[], description="Things the player should know, e.g. Chroma is not installed."
+    )
+
+
 class JobInfo(BaseModel):
     id: str
     status: JobStatus
@@ -91,6 +99,16 @@ class JobInfo(BaseModel):
     message: str = ""
     error: str | None = None
     revision: int = Field(default=0, description="Bumped every time the map changes.")
+    install_when_done: bool = Field(
+        default=False, description="Copy the map into the game as soon as the first run is done."
+    )
+    installed: InstallResult | None = Field(
+        default=None,
+        description="Where this revision of the map is installed in the game, if it is.",
+    )
+    install_error: str | None = Field(
+        default=None, description="Why the automatic install failed (the map itself is fine)."
+    )
     last_seq: int = Field(
         default=0, description="seq of the latest event; pass it as ?after= to follow new ones."
     )
@@ -99,8 +117,8 @@ class JobInfo(BaseModel):
 class JobEvent(BaseModel):
     """One server-sent event. ``type`` is also the SSE ``event:`` name and ``seq`` its ``id:``.
 
-    A ``status`` event with status ``done`` or ``failed`` ends the current run; the server then
-    closes the stream, so clients should close their EventSource on it.
+    A ``status`` event with status ``done``, ``failed`` or ``cancelled`` ends the current run;
+    the server then closes the stream, so clients should close their EventSource on it.
     """
 
     seq: int
@@ -133,13 +151,6 @@ class RegenerateRequest(BaseModel):
     difficulty: Difficulty
     seed: int
     temperature: float = Field(default=1.0, gt=0.0, le=2.0)
-
-
-class InstallResult(BaseModel):
-    path: str = Field(description="The installed map folder inside CustomLevels.")
-    warnings: list[str] = Field(
-        default=[], description="Things the player should know, e.g. Chroma is not installed."
-    )
 
 
 class ErrorResponse(BaseModel):

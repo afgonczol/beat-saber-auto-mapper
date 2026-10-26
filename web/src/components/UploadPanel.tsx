@@ -1,10 +1,11 @@
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import {
   DIFFICULTIES,
   DIFFICULTY_LABEL,
   MODES,
   MODE_LABEL,
   createJob,
+  isAudioFile,
   type Characteristic,
   type Difficulty,
   type JobInfo,
@@ -32,6 +33,34 @@ const LIGHT_STYLES: { value: LightStyle | ""; label: string; hint: string }[] = 
   { value: "accent", label: "Accent", hint: "White accents and colour boosts" },
   { value: "none", label: "Model's choice", hint: "No style token: the model picks by chance" },
 ];
+
+// Folders dropped on the page: read the audio files inside (and in their subfolders).
+async function filesFromEntry(entry: FileSystemEntry): Promise<File[]> {
+  if (entry.isFile) {
+    return new Promise((resolve) => (entry as FileSystemFileEntry).file((f) => resolve([f]), () => resolve([])));
+  }
+  if (!entry.isDirectory) return [];
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
+  const entries: FileSystemEntry[] = [];
+  // readEntries returns at most ~100 entries per call; keep reading until it returns none.
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve) => reader.readEntries(resolve, () => resolve([])));
+    if (batch.length === 0) break;
+    entries.push(...batch);
+  }
+  const nested = await Promise.all(entries.map(filesFromEntry));
+  return nested.flat().sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function droppedFiles(e: DragEvent): Promise<File[]> {
+  const entries = [...e.dataTransfer.items]
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((x): x is FileSystemEntry => !!x);
+  if (entries.length === 0) return [...e.dataTransfer.files];
+  return (await Promise.all(entries.map(filesFromEntry))).flat();
+}
+
+const fileKey = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
 
 function toggle<T>(list: T[], item: T): T[] {
   return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
@@ -67,9 +96,17 @@ function TriState({
   );
 }
 
-export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }) {
-  const [file, setFile] = useState<File | null>(null);
+interface Props {
+  /** Called once per batch with the queued jobs, in queue order. */
+  onQueued: (jobs: JobInfo[]) => void;
+}
+
+export function UploadPanel({ onQueued }: Props) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [installWhenDone, setInstallWhenDone] = useState(false);
+  const [uploaded, setUploaded] = useState(0);
   const [modes, setModes] = useState<Characteristic[]>(["Standard"]);
   const [difficulties, setDifficulties] = useState<Difficulty[]>(["Hard", "Expert", "ExpertPlus"]);
   const [lighting, setLighting] = useState<LightingStyle>("v3");
@@ -91,18 +128,34 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
 
-  const onDrop = (e: DragEvent) => {
+  useEffect(() => {
+    // Not in React's attribute types; lets the second picker choose a whole folder.
+    folderInput.current?.setAttribute("webkitdirectory", "");
+  }, []);
+
+  // Add songs to the batch (duplicates ignored); anything that is not audio is skipped.
+  const addFiles = (incoming: File[]) => {
+    const audio = incoming.filter((f) => isAudioFile(f.name));
+    setSkipped(incoming.filter((f) => !isAudioFile(f.name)).map((f) => f.name));
+    setFiles((prev) => {
+      const seen = new Set(prev.map(fileKey));
+      return [...prev, ...audio.filter((f) => !seen.has(fileKey(f)) && seen.add(fileKey(f)))];
+    });
+  };
+
+  const onDrop = async (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    addFiles(await droppedFiles(e));
   };
 
   const submit = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     setBusy(true);
     setError(null);
+    setUploaded(0);
     const options: JobOptions = {
       modes,
       difficulties,
@@ -117,20 +170,33 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
       reaction_time: reactionTime === "" ? null : Number(reactionTime),
       njs: njs === "" ? null : Number(njs),
     };
-    try {
-      onCreated(await createJob(file, options));
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
+    // One upload at a time: the first song starts generating while the rest upload.
+    const queued: JobInfo[] = [];
+    let failed: File[] = [];
+    for (const f of files) {
+      try {
+        queued.push(await createJob(f, options, installWhenDone));
+      } catch (e) {
+        failed = [...failed, f];
+        setError(`${f.name}: ${(e as Error).message}`);
+      }
+      setUploaded((n) => n + 1);
     }
+    setBusy(false);
+    setFiles(failed); // keep what did not upload, to retry
+    if (queued.length > 0) onQueued(queued);
   };
 
-  const ready = file && modes.length > 0 && difficulties.length > 0 && !busy;
+  const ready = files.length > 0 && modes.length > 0 && difficulties.length > 0 && !busy;
+  const totalMb = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
+  let label = "Generate map";
+  if (busy) label = files.length > 1 ? `Uploading ${Math.min(uploaded + 1, files.length)} of ${files.length}…` : "Uploading…";
+  else if (files.length > 1) label = `Queue ${files.length} songs`;
 
   return (
     <div className="upload">
       <div
-        className={`dropzone ${dragging ? "dragging" : ""} ${file ? "has-file" : ""}`}
+        className={`dropzone ${dragging ? "dragging" : ""} ${files.length > 0 ? "has-file" : ""}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -141,29 +207,95 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
         role="button"
         tabIndex={0}
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
-        aria-label="Choose a song"
+        aria-label="Choose songs"
       >
         <input
           ref={input}
           type="file"
           accept={ACCEPT}
+          multiple
           hidden
-          onChange={(e) => e.target.files?.[0] && setFile(e.target.files[0])}
+          onChange={(e) => {
+            addFiles([...(e.target.files ?? [])]);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={folderInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles([...(e.target.files ?? [])]);
+            e.target.value = "";
+          }}
         />
         <div className="drop-icon" aria-hidden>
           <span className="cube red" />
           <span className="cube blue" />
         </div>
-        {file ? (
+        {files.length === 1 ? (
           <>
-            <div className="drop-title">{file.name}</div>
-            <div className="muted">{(file.size / 1024 / 1024).toFixed(1)} MB · click or drop to replace</div>
+            <div className="drop-title">{files[0].name}</div>
+            <div className="muted">{totalMb.toFixed(1)} MB · click or drop to add more songs</div>
+          </>
+        ) : files.length > 1 ? (
+          <>
+            <div className="drop-title">{files.length} songs</div>
+            <div className="muted">{totalMb.toFixed(1)} MB · click or drop to add more</div>
           </>
         ) : (
           <>
-            <div className="drop-title">Drop a song here</div>
-            <div className="muted">or click to choose · mp3, ogg, wav, flac, m4a</div>
+            <div className="drop-title">Drop songs here</div>
+            <div className="muted">or click to choose · one or many · mp3, ogg, wav, flac, m4a</div>
           </>
+        )}
+        <button
+          type="button"
+          className="ghost small"
+          onClick={(e) => {
+            e.stopPropagation();
+            folderInput.current?.click();
+          }}
+        >
+          Choose a folder…
+        </button>
+        {files.length > 1 && (
+          <ol className="file-list" onClick={(e) => e.stopPropagation()}>
+            {files.map((f) => (
+              <li key={fileKey(f)}>
+                <span title={f.name}>{f.name}</span>
+                <button
+                  type="button"
+                  className="ghost small"
+                  disabled={busy}
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => setFiles(files.filter((x) => x !== f))}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+        {files.length > 0 && !busy && (
+          <button
+            type="button"
+            className="ghost small"
+            onClick={(e) => {
+              e.stopPropagation();
+              setFiles([]);
+              setSkipped([]);
+            }}
+          >
+            Clear
+          </button>
+        )}
+        {skipped.length > 0 && (
+          <div className="muted" title={skipped.join("\n")}>
+            Skipped {skipped.length} file{skipped.length > 1 ? "s" : ""} that {skipped.length > 1 ? "are" : "is"} not
+            audio
+          </div>
         )}
       </div>
 
@@ -353,10 +485,18 @@ export function UploadPanel({ onCreated }: { onCreated: (job: JobInfo) => void }
           </label>
         </fieldset>
 
+        <label className="install-toggle" title="Copy each map into Beat Saber's CustomLevels as soon as it is generated">
+          <input type="checkbox" checked={installWhenDone} onChange={() => setInstallWhenDone(!installWhenDone)} />
+          Install to game when done
+        </label>
+
         {error && <div className="error">{error}</div>}
         <button type="button" className="primary big" disabled={!ready} onClick={submit}>
-          {busy ? "Uploading…" : "Generate map"}
+          {label}
         </button>
+        {files.length > 1 && !busy && (
+          <div className="muted center-text">Every song gets the options above; they run one after another.</div>
+        )}
       </div>
     </div>
   );

@@ -19,7 +19,10 @@ export type LightingStyle = JobOptions["lighting"];
 
 export const MODES: Characteristic[] = ["Standard", "OneSaber", "NoArrows", "90Degree", "360Degree"];
 export const DIFFICULTIES: Difficulty[] = ["Easy", "Normal", "Hard", "Expert", "ExpertPlus"];
-export const TERMINAL: JobStatus[] = ["done", "failed"];
+export const TERMINAL: JobStatus[] = ["done", "failed", "cancelled"];
+export const AUDIO_SUFFIXES = [".mp3", ".ogg", ".egg", ".wav", ".flac", ".m4a", ".aac", ".opus"];
+
+export const isAudioFile = (name: string) => AUDIO_SUFFIXES.some((s) => name.toLowerCase().endsWith(s));
 
 export const MODE_LABEL: Record<string, string> = {
   Standard: "Standard",
@@ -54,9 +57,11 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function createJob(audio: File, options: JobOptions): Promise<JobInfo> {
+/** Queue one song. `install`: copy the map into the game as soon as it is generated. */
+export async function createJob(audio: File, options: JobOptions, install = false): Promise<JobInfo> {
   const form = new FormData();
   form.append("audio", audio, audio.name);
+  form.append("install", String(install));
   for (const m of options.modes ?? []) form.append("modes", m);
   for (const d of options.difficulties ?? []) form.append("difficulties", d);
   form.append("lighting", options.lighting ?? "v3");
@@ -74,6 +79,22 @@ export async function createJob(audio: File, options: JobOptions): Promise<JobIn
 
 export async function getJob(id: string): Promise<JobInfo> {
   return json(await fetch(`${BASE}/jobs/${id}`));
+}
+
+/** Every job on the server, oldest first (the order they run in). */
+export async function listJobs(): Promise<JobInfo[]> {
+  return json(await fetch(`${BASE}/jobs`));
+}
+
+/** Cancel a queued job, or stop a running one at its next step. */
+export async function cancelJob(id: string): Promise<JobInfo> {
+  return json(await fetch(`${BASE}/jobs/${id}/cancel`, { method: "POST" }));
+}
+
+/** Take a job off the list (and the queue) and delete its files on the server. */
+export async function removeJob(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/jobs/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) await json(res);
 }
 
 export async function getMap(id: string): Promise<MapPreview> {

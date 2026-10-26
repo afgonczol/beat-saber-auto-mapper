@@ -64,6 +64,25 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 
 Run `bsmapper generate --help` for everything.
 
+### Many songs at once
+
+Give `generate` several files, or a folder. It loads the model once and makes the songs one
+after another with the same options:
+
+```powershell
+# Every song in a folder (mp3, ogg, egg, wav, flac, m4a, aac, opus; subfolders are skipped)
+bsmapper generate "C:\Music\To map" --install
+
+# A few files, Expert and Expert+ only
+bsmapper generate "song one.mp3" "song two.ogg" --difficulties Expert,Expert+ --install
+```
+
+- If a song fails, the rest still run. A summary table at the end lists each song, whether it
+  worked, how long it took, and where the map went (or the error).
+- With `--install`, each map goes into the game as soon as it is done.
+- The command exits with code 1 if any song failed. Ctrl+C stops the batch, and the summary
+  still lists the songs that finished.
+
 ### Typical recipes
 
 ```powershell
@@ -100,6 +119,29 @@ In the page:
 4. Preview the map in 3D, synced to the music.
 5. Click **Download** or **Install to game**. You can regenerate a single difficulty with
    a new seed.
+
+### Queue lots of songs
+
+1. Drop several songs (or a whole folder) on the drop area, or click it and multi-select.
+   **Choose a folder…** picks a folder. Files that are not audio are skipped, and the ✕
+   next to a song takes it out of the batch.
+2. Set the options once. Every song in the batch gets the same ones.
+3. Tick **Install to game when done** if you want to leave it running. Each map is copied
+   into `CustomLevels` as soon as it is finished.
+4. Click **Queue N songs**. The songs upload and then run one at a time on the GPU.
+
+The **Queue** panel at the top of the start page shows each song: waiting, running (with its
+stage and progress), done, failed (with the error) or cancelled.
+- **Cancel** stops the running song at its next step. The ✕ takes a waiting song off the
+  queue, or a finished one off the list. **Cancel waiting** and **Clear finished** do the
+  same for all of them. Clearing deletes the server's copy, but installed maps stay in the
+  game.
+- Click a song's name or **Open** to get its normal result page: preview, **Download** and
+  **Install to game**. The **.zip** button downloads it straight from the queue.
+- While you are on a song's page, the header button (**Queue (3 left) · new songs**) goes
+  back to the queue.
+- The queue lives in the server, so reloading or closing the page loses nothing. Restarting
+  the server (closing the `bsmapper-web.cmd` window) clears it, so let a batch finish first.
 
 A full song with all five Standard difficulties takes about a minute and a half on the 3090.
 The UI is already built (`web\dist`). After pulling web changes, rebuild it with

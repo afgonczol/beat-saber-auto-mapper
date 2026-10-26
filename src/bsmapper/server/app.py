@@ -6,7 +6,6 @@ import asyncio
 import json
 import mimetypes
 import os
-import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,15 +22,14 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from bsmapper import __version__
-from bsmapper.generation import install_map, load_config, safe_folder_name
-from bsmapper.generation.install import config_path
 from bsmapper.interfaces import LightingStyle
 from bsmapper.schema import Characteristic, Difficulty
-from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager
+from bsmapper.server.install import InstallUnavailable, MapNotReady
+from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager, JobNotActiveError
 from bsmapper.server.models import (
     ErrorResponse,
     InstallResult,
@@ -52,10 +50,6 @@ SSE_KEEPALIVE_S = 15.0
 _DEFAULTS = JobOptions()
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "No such job."}}
 NOT_READY = {409: {"model": ErrorResponse, "description": "The job has no finished map yet."}}
-CHROMA_MISSING = (
-    "This map uses Chroma lighting, but Chroma.dll was not found in {dll}. Without the "
-    "Chroma mod the lights play in the default colours."
-)
 
 
 def create_app(
@@ -116,6 +110,11 @@ def _api(manager: JobManager) -> APIRouter:
     def snapshot(job: Job) -> JobInfo:
         with job.lock:
             return job.info.model_copy(deep=True)
+
+    @router.get("/jobs")
+    def list_jobs() -> list[JobInfo]:
+        """Every job the server knows, oldest first: the queue order. Jobs last until restart."""
+        return [snapshot(job) for job in manager.all()]
 
     @router.post(
         "/jobs",
@@ -183,8 +182,16 @@ def _api(manager: JobManager) -> APIRouter:
                 "defaults.",
             ),
         ] = None,
+        install: Annotated[
+            Literal["true", "false"],
+            Form(description="Copy the map into the game as soon as it is generated."),
+        ] = "false",
     ) -> JobInfo:
-        """Upload a song and queue a generation job. Options are multipart form fields."""
+        """Upload a song and queue a generation job. Options are multipart form fields.
+
+        Jobs run one at a time in the order they were queued; post one per song to queue a
+        batch.
+        """
         options = JobOptions(
             modes=modes,
             difficulties=difficulties,
@@ -200,7 +207,9 @@ def _api(manager: JobManager) -> APIRouter:
             reaction_time=reaction_time,
         )
         try:
-            job = manager.submit(audio.filename or "song", audio.file, options)
+            job = manager.submit(
+                audio.filename or "song", audio.file, options, install_when_done=install == "true"
+            )
         except ValueError as exc:
             raise HTTPException(415, str(exc)) from exc
         return snapshot(job)
@@ -209,6 +218,42 @@ def _api(manager: JobManager) -> APIRouter:
     def job_status(job_id: str) -> JobInfo:
         """Status and progress of a job."""
         return snapshot(get_job(job_id))
+
+    @router.delete(
+        "/jobs/{job_id}",
+        status_code=204,
+        response_class=Response,
+        responses={**NOT_FOUND, 409: {"model": ErrorResponse, "description": "Job is running."}},
+    )
+    def remove_job(job_id: str) -> Response:
+        """Take a job off the list (and the queue, if queued) and delete its files.
+
+        Maps already installed in the game stay there. Cancel a running job first.
+        """
+        try:
+            manager.remove(get_job(job_id))
+        except JobBusyError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return Response(status_code=204)
+
+    @router.post(
+        "/jobs/{job_id}/cancel",
+        responses={
+            **NOT_FOUND,
+            409: {"model": ErrorResponse, "description": "Job is not queued or running."},
+        },
+    )
+    def cancel_job(job_id: str) -> JobInfo:
+        """Cancel a queued job, or stop a running one at its next pipeline step.
+
+        A cancelled regenerate keeps the earlier map (the job stays done).
+        """
+        job = get_job(job_id)
+        try:
+            manager.cancel(job)
+        except JobNotActiveError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return snapshot(job)
 
     @router.get(
         "/jobs/{job_id}/events",
@@ -330,36 +375,12 @@ def _api(manager: JobManager) -> APIRouter:
 
         Installing again replaces the earlier copy of this song.
         """
-        job = get_job(job_id)
-        with job.lock:
-            result = job.result if job.info.status in TERMINAL else None
-        map_dir = job.input.work_dir / "map"
-        if result is None or not (map_dir / "Info.dat").is_file():
-            raise HTTPException(409, "map not ready")
         try:
-            config = load_config()
-        except (OSError, ValueError) as exc:
-            raise HTTPException(503, f"bad config {config_path()}: {exc}") from exc
-        beatmap = result.beatmap
-        # install_map names the installed folder after the source folder, so stage a copy.
-        name = safe_folder_name(beatmap.song_name, beatmap.song_author)
-        staged = job.input.work_dir / "install" / name
-        shutil.rmtree(staged.parent, ignore_errors=True)
-        try:
-            shutil.copytree(map_dir, staged)
-            dest = install_map(staged, config)
-        except FileNotFoundError as exc:
+            return manager.install(get_job(job_id))
+        except MapNotReady as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except InstallUnavailable as exc:
             raise HTTPException(503, str(exc)) from exc
-        finally:
-            shutil.rmtree(staged.parent, ignore_errors=True)
-        warnings = []
-        shows = [beatmap.lightshow, *(d.lightshow for d in beatmap.difficulties)]
-        chroma = job.input.options.lighting == "chroma" or any(
-            s is not None and s.uses_chroma for s in shows
-        )
-        if chroma and not config.chroma_installed():
-            warnings.append(CHROMA_MISSING.format(dll=config.chroma_dll.parent))
-        return InstallResult(path=str(dest), warnings=warnings)
 
     return router
 
