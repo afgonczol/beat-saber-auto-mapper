@@ -80,6 +80,32 @@ def test_v3_fx_events_become_indices(tmp_path):
     assert data["_fxEventsCollection"]["_fl"][1] == {"b": 2, "p": 0, "i": 1, "v": 100}
 
 
+def test_v3_fx_int_events_mirror_float_events(tmp_path):
+    # An int vfx group (e.g. in TheWeekndEnvironment) reads its indices from _il; an
+    # empty _il made the game fail to load the map with ArgumentOutOfRangeException.
+    write_map(read_map(FIXTURES / "v3"), tmp_path, "v3")
+    collection = load(tmp_path / "ExpertPlusStandard.dat")["_fxEventsCollection"]
+    assert len(collection["_il"]) == len(collection["_fl"]) > 0
+    assert collection["_il"][1] == {"b": 2, "p": 0, "v": 100}
+    assert all(isinstance(e["v"], int) for e in collection["_il"])
+
+
+def test_v3_fx_index_only_in_int_events_is_read(tmp_path):
+    src = FIXTURES / "v3"
+    for f in src.iterdir():
+        (tmp_path / f.name).write_bytes(f.read_bytes())
+    path = tmp_path / "ExpertPlus.dat"
+    data = load(path)
+    data["_fxEventsCollection"]["_il"] = [{"b": 0, "p": 0, "v": 0}] * len(
+        data["_fxEventsCollection"]["_fl"]
+    ) + [{"b": 4, "p": 0, "v": 1}]
+    data["vfxEventBoxGroups"][0]["e"][0]["l"].append(len(data["_fxEventsCollection"]["_fl"]))
+    path.write_text(json.dumps(data), "utf-8")
+    dmap = next(d for d in read_map(tmp_path).difficulties if d.difficulty.name == "EXPERT_PLUS")
+    fx = next(g for g in dmap.lightshow.event_box_groups if g.kind == "fx")
+    assert fx.boxes[0]["l"][-1] == {"b": 4.0, "p": 0, "i": 0, "v": 1.0}
+
+
 def test_v4_layout(tmp_path):
     write_map(read_map(FIXTURES / "v3"), tmp_path, "v4", song_duration=30)
     names = {p.name for p in tmp_path.iterdir()}
