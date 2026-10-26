@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -148,3 +149,57 @@ def test_chroma_warning(fake_pipeline, tmp_path: Path) -> None:
 
     bad = runner.invoke(cli.app, ["generate", str(song), "--lighting", "neon", *out])
     assert bad.exit_code != 0
+
+
+def test_generate_batch_folder(fake_pipeline, monkeypatch, tmp_path: Path) -> None:
+    """A folder of songs: one model load, a failure does not stop the rest, summary at the end."""
+    jobs = pytest.importorskip("bsmapper.server.jobs")
+    assert cli.AUDIO_SUFFIXES == jobs.AUDIO_SUFFIXES  # the CLI and the web UI take the same files
+    loads = []
+    fake_make = generation.make_pipeline
+    monkeypatch.setattr(
+        generation, "make_pipeline", lambda *a, **kw: loads.append(1) or fake_make()
+    )
+    analyze = generation.Pipeline.analyze
+
+    def flaky_analyze(self, audio):
+        if Path(audio).stem.startswith("Broken"):
+            raise ValueError("not a song")
+        return analyze(self, audio)
+
+    monkeypatch.setattr(generation.Pipeline, "analyze", flaky_analyze)
+    songs = tmp_path / "songs"
+    songs.mkdir()
+    for name in ("B Artist - Second.ogg", "A Artist - First.mp3", "Broken - Song.wav"):
+        (songs / name).write_bytes(b"x")
+    (songs / "cover.jpg").write_bytes(b"x")
+    extra = tmp_path / "C Artist - Third.flac"
+    extra.write_bytes(b"x")
+    levels = tmp_path / "levels"
+    levels.mkdir()
+    (tmp_path / "config.toml").write_text(
+        f"[game]\ncustom_levels = '{levels.as_posix()}'\n", encoding="utf-8"
+    )
+    args = ["generate", str(songs), str(extra), str(songs / "A Artist - First.mp3")]
+    args += ["--out", str(tmp_path / "out"), "--difficulties", "Expert", "--install"]
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 1, result.output  # one song failed
+    assert len(loads) == 1
+    assert "Queued 4 songs" in result.output  # the repeated file counts once
+    order = [result.output.index(f"] {n}") for n in ("A Artist", "B Artist", "Broken", "C Artist")]
+    assert order == sorted(order)
+    assert "Summary: 3 of 4 songs done, 1 failed" in result.output
+    assert "ValueError: not a song" in result.output
+    for title, artist in (("First", "A Artist"), ("Second", "B Artist"), ("Third", "C Artist")):
+        assert (levels / f"{title} - {artist}" / "Info.dat").is_file()
+    summary = result.output[result.output.index("Summary:") :]
+    assert summary.count(" done ") == 3 and summary.count("FAILED") == 1
+    assert re.search(r"1 difficulty, \d+ notes, installed as First - A Artist", summary)
+
+
+def test_generate_rejects_missing_and_empty_inputs(fake_pipeline, tmp_path: Path) -> None:
+    result = runner.invoke(cli.app, ["generate", str(tmp_path / "nope.mp3")])
+    assert result.exit_code != 0 and "not a file or folder" in result.output
+    (tmp_path / "empty").mkdir()
+    result = runner.invoke(cli.app, ["generate", str(tmp_path / "empty")])
+    assert result.exit_code != 0 and "no audio files" in result.output

@@ -11,11 +11,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Jobs
+         * @description Every job the server knows, oldest first: the queue order. Jobs last until restart.
+         */
+        get: operations["list_jobs_api_jobs_get"];
         put?: never;
         /**
          * Create Job
          * @description Upload a song and queue a generation job. Options are multipart form fields.
+         *
+         *     Jobs run one at a time in the order they were queued; post one per song to queue a
+         *     batch.
          */
         post: operations["create_job_api_jobs_post"];
         delete?: never;
@@ -38,6 +45,34 @@ export interface paths {
         get: operations["job_status_api_jobs__job_id__get"];
         put?: never;
         post?: never;
+        /**
+         * Remove Job
+         * @description Take a job off the list (and the queue, if queued) and delete its files.
+         *
+         *     Maps already installed in the game stay there. Cancel a running job first.
+         */
+        delete: operations["remove_job_api_jobs__job_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Job
+         * @description Cancel a queued job, or stop a running one at its next pipeline step.
+         *
+         *     A cancelled regenerate keeps the earlier map (the job stays done).
+         */
+        post: operations["cancel_job_api_jobs__job_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -367,6 +402,13 @@ export interface components {
              * @description Seconds from spawn to strike for Expert and Expert+; omit for defaults.
              */
             reaction_time?: number | null;
+            /**
+             * Install
+             * @description Copy the map into the game as soon as it is generated.
+             * @default false
+             * @enum {string}
+             */
+            install: "true" | "false";
         };
         /** Bomb */
         Bomb: {
@@ -579,6 +621,19 @@ export interface components {
              */
             revision: number;
             /**
+             * Install When Done
+             * @description Copy the map into the game as soon as the first run is done.
+             * @default false
+             */
+            install_when_done: boolean;
+            /** @description Where this revision of the map is installed in the game, if it is. */
+            installed?: components["schemas"]["InstallResult"] | null;
+            /**
+             * Install Error
+             * @description Why the automatic install failed (the map itself is fine).
+             */
+            install_error?: string | null;
+            /**
              * Last Seq
              * @description seq of the latest event; pass it as ?after= to follow new ones.
              * @default 0
@@ -662,7 +717,7 @@ export interface components {
          * JobStatus
          * @enum {string}
          */
-        JobStatus: "queued" | "running" | "done" | "failed";
+        JobStatus: "queued" | "running" | "done" | "failed" | "cancelled";
         /** Lightshow */
         Lightshow: {
             /** Basic Events */
@@ -776,8 +831,8 @@ export interface components {
          * JobEvent
          * @description One server-sent event. ``type`` is also the SSE ``event:`` name and ``seq`` its ``id:``.
          *
-         *     A ``status`` event with status ``done`` or ``failed`` ends the current run; the server then
-         *     closes the stream, so clients should close their EventSource on it.
+         *     A ``status`` event with status ``done``, ``failed`` or ``cancelled`` ends the current run;
+         *     the server then closes the stream, so clients should close their EventSource on it.
          */
         JobEvent: {
             /** Seq */
@@ -813,6 +868,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_jobs_api_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"][];
+                };
+            };
+        };
+    };
     create_job_api_jobs_post: {
         parameters: {
             query?: never;
@@ -877,6 +952,102 @@ export interface operations {
             };
             /** @description No such job. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_job_api_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Job is running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_job_api_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description No such job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Job is not queued or running. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

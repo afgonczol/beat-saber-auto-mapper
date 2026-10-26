@@ -176,6 +176,38 @@ button.warning:hover { background: #1c2030; }
 .install-msg .ok { color: var(--ok); }
 .install-msg .warn { color: var(--warn); }
 
+/* Queue of songs */
+.home { display: grid; gap: 20px; }
+button.small, .button.small { padding: 5px 10px; font-size: 0.85rem; border-radius: 8px; }
+.queue { display: grid; gap: 12px; }
+.queue-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; }
+.queue-bulk { display: flex; gap: 8px; flex-wrap: wrap; }
+.queue-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 46vh; overflow: auto; }
+.queue-row { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--line); }
+.queue-row.running { border-left-color: var(--accent); }
+.queue-row.done { border-left-color: var(--ok); }
+.queue-row.failed { border-left-color: var(--error); }
+.queue-row.cancelled { opacity: 0.6; }
+.queue-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.queue-title { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.queue-name { color: var(--text); text-decoration: none; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.queue-name:hover { text-decoration: underline; }
+.queue-detail { font-size: 0.82rem; overflow-wrap: anywhere; }
+.queue-detail.ok { color: var(--ok); }
+.queue-detail.warn { color: var(--warn); }
+.queue-actions { display: flex; gap: 6px; flex: none; align-items: center; }
+.pill { flex: none; font-size: 0.7rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 999px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+.pill.running { color: var(--accent); border-color: var(--accent); }
+.pill.done { color: var(--ok); border-color: rgba(61, 220, 151, 0.5); }
+.pill.failed { color: var(--error); border-color: rgba(255, 77, 94, 0.5); }
+.file-list { list-style: none; margin: 12px 0 4px; padding: 0; width: min(100%, 460px); max-height: 220px; overflow: auto; display: grid; gap: 4px; text-align: left; cursor: default; }
+.file-list li { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--panel-2); font-size: 0.88rem; }
+.file-list li span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dropzone > button.ghost { margin-top: 10px; }
+.install-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer; font-size: 0.95rem; }
+.center-text { text-align: center; }
+.progress-card .cancel { justify-self: end; }
+
 @media (max-width: 960px) {
   .upload, .preview { grid-template-columns: 1fr; }
   .dropzone { min-height: 220px; }
@@ -185,6 +217,8 @@ button.warning:hover { background: #1c2030; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .style-slider { grid-template-columns: auto 1fr auto; }
   .style-slider output { display: none; }
+  .queue-row { flex-wrap: wrap; }
+  .queue-actions { width: 100%; justify-content: flex-end; }
 }
 .light-style { display: block; margin-top: 10px; font-size: 0.92rem; color: var(--muted); }
 .light-style select { margin-left: 6px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: inherit; }

@@ -7,12 +7,36 @@
   },
   "paths": {
     "/api/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Jobs",
+        "description": "Every job the server knows, oldest first: the queue order. Jobs last until restart.",
+        "operationId": "list_jobs_api_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JobInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Jobs Api Jobs Get"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "jobs"
         ],
         "summary": "Create Job",
-        "description": "Upload a song and queue a generation job. Options are multipart form fields.",
+        "description": "Upload a song and queue a generation job. Options are multipart form fields.\n\nJobs run one at a time in the order they were queued; post one per song to queue a\nbatch.",
         "operationId": "create_job_api_jobs_post",
         "requestBody": {
           "content": {
@@ -90,6 +114,123 @@
           },
           "404": {
             "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Remove Job",
+        "description": "Take a job off the list (and the queue, if queued) and delete its files.\n\nMaps already installed in the game stay there. Cancel a running job first.",
+        "operationId": "remove_job_api_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Cancel Job",
+        "description": "Cancel a queued job, or stop a running one at its next pipeline step.\n\nA cancelled regenerate keeps the earlier map (the job stays done).",
+        "operationId": "cancel_job_api_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not queued or running.",
             "content": {
               "application/json": {
                 "schema": {
@@ -891,6 +1032,16 @@
             ],
             "title": "Reaction Time",
             "description": "Seconds from spawn to strike for Expert and Expert+; omit for defaults."
+          },
+          "install": {
+            "type": "string",
+            "enum": [
+              "true",
+              "false"
+            ],
+            "title": "Install",
+            "description": "Copy the map into the game as soon as it is generated.",
+            "default": "false"
           }
         },
         "type": "object",
@@ -1348,6 +1499,35 @@
             "description": "Bumped every time the map changes.",
             "default": 0
           },
+          "install_when_done": {
+            "type": "boolean",
+            "title": "Install When Done",
+            "description": "Copy the map into the game as soon as the first run is done.",
+            "default": false
+          },
+          "installed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InstallResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where this revision of the map is installed in the game, if it is."
+          },
+          "install_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Install Error",
+            "description": "Why the automatic install failed (the map itself is fine)."
+          },
           "last_seq": {
             "type": "integer",
             "title": "Last Seq",
@@ -1531,7 +1711,8 @@
           "queued",
           "running",
           "done",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "JobStatus",
         "type": "string"
@@ -1780,7 +1961,7 @@
         "title": "ValidationError"
       },
       "JobEvent": {
-        "description": "One server-sent event. ``type`` is also the SSE ``event:`` name and ``seq`` its ``id:``.\n\nA ``status`` event with status ``done`` or ``failed`` ends the current run; the server then\ncloses the stream, so clients should close their EventSource on it.",
+        "description": "One server-sent event. ``type`` is also the SSE ``event:`` name and ``seq`` its ``id:``.\n\nA ``status`` event with status ``done``, ``failed`` or ``cancelled`` ends the current run;\nthe server then closes the stream, so clients should close their EventSource on it.",
         "properties": {
           "seq": {
             "title": "Seq",

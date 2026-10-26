@@ -31,9 +31,12 @@ npm run gen:api                      # rewrite src/api/schema.d.ts from it
 
 | Endpoint | What |
 | --- | --- |
-| `POST /api/jobs` | multipart: `audio` file + `modes`, `difficulties` (repeat the field), `lighting` (`vanilla`/`v3`/`chroma`), `style` (0 flowy .. 1 technical, omit for none), `seed` |
-| `GET /api/jobs/{id}` | status, stage, progress, `last_seq` |
-| `GET /api/jobs/{id}/events?after=` | SSE progress; ends after a `done`/`failed` status event |
+| `GET /api/jobs` | every job, oldest first (the queue order); the queue panel polls this. Jobs last until the server restarts |
+| `POST /api/jobs` | multipart: `audio` file + `modes`, `difficulties` (repeat the field), `lighting` (`vanilla`/`v3`/`chroma`), `style` (0 flowy .. 1 technical, omit for none), `seed`, ..., `install` (`true`: copy into the game when done). One song per request; post several to queue a batch. Jobs run one at a time |
+| `GET /api/jobs/{id}` | status (`queued`/`running`/`done`/`failed`/`cancelled`), stage, progress, `last_seq`, `installed` / `install_error` |
+| `DELETE /api/jobs/{id}` | take a job off the list (and the queue) and delete its files; 409 while running |
+| `POST /api/jobs/{id}/cancel` | cancel a queued job, or stop a running one at its next progress step |
+| `GET /api/jobs/{id}/events?after=` | SSE progress; ends after a `done`/`failed`/`cancelled` status event |
 | `GET /api/jobs/{id}/map` | preview JSON: the `schema.Beatmap` (times in beats) + warnings |
 | `GET /api/jobs/{id}/audio` | the song for playback: the packaged `song.egg` (aligned with the map's beats) once the map is ready, else the upload |
 | `GET /api/jobs/{id}/download` | the game-ready zip |

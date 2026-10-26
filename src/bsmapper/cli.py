@@ -14,6 +14,8 @@ app.add_typer(lights_app, name="lights")
 
 
 _MODE_ALIASES = {"90": "90Degree", "360": "360Degree", "onehand": "OneSaber"}
+# Songs `generate` picks up from a folder (the same types the web UI accepts).
+AUDIO_SUFFIXES = (".mp3", ".ogg", ".egg", ".wav", ".flac", ".m4a", ".aac", ".opus")
 _DIFF_ALIASES = {"expert+": "ExpertPlus", "e+": "ExpertPlus", "ex+": "ExpertPlus"}
 
 
@@ -43,6 +45,36 @@ def _parse_jump_option(text: str | None, param: str, low: float, high: float):
     return None, per
 
 
+def _audio_files(paths: list[Path]) -> list[Path]:
+    """Files as given, folders expanded to the audio files directly inside them (sorted)."""
+    songs: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            found = sorted(
+                (f for f in path.iterdir() if f.is_file() and f.suffix.lower() in AUDIO_SUFFIXES),
+                key=lambda f: f.name.lower(),
+            )
+            if not found:
+                kinds = ", ".join(AUDIO_SUFFIXES)
+                raise typer.BadParameter(f"no audio files ({kinds}) in {path}", param_hint="AUDIO")
+            songs += found
+        elif path.is_file():
+            songs.append(path)
+        else:
+            raise typer.BadParameter(f"{path} is not a file or folder", param_hint="AUDIO")
+    unique = list(dict.fromkeys(p.resolve() for p in songs))
+    return [Path(p) for p in unique]
+
+
+class _InstallError(RuntimeError):
+    """The map was made, but copying it into the game failed."""
+
+
+def _duration(seconds: float) -> str:
+    minutes, secs = divmod(round(seconds), 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{seconds:.1f}s"
+
+
 def _parse_enum_list(text: str, enum, aliases: dict[str, str], param: str) -> list:
     by_name = {m.value.lower(): m for m in enum}
     out = []
@@ -64,7 +96,13 @@ def _parse_enum_list(text: str, enum, aliases: dict[str, str], param: str) -> li
 
 @app.command()
 def generate(
-    audio: Path,
+    audio: Annotated[
+        list[Path],
+        typer.Argument(
+            help="Audio file(s), or folders of them: each song becomes its own map, one "
+            "after another with the model loaded once."
+        ),
+    ],
     out: Path = Path("out"),
     difficulties: str = typer.Option(
         "Easy,Normal,Hard,Expert,ExpertPlus", help="Comma-separated; Expert+ works too."
@@ -89,7 +127,9 @@ def generate(
         help="How much repeated music reuses earlier patterns (note_v1): 0 = never, 0.5 = "
         "the learned amount, 1 = twice as strongly. Default: [generate] repetition, else learned.",
     ),
-    install: bool = typer.Option(False, help="Copy the result into Beat Saber's CustomLevels."),
+    install: bool = typer.Option(
+        False, help="Copy each finished map into Beat Saber's CustomLevels."
+    ),
     seed: int = 0,
     temperature: float = typer.Option(1.0, min=0.0, max=2.0, help="Sampling randomness."),
     njs: str | None = typer.Option(
@@ -140,10 +180,12 @@ def generate(
     tracker: str = typer.Option("auto", help="Beat tracker: auto, beat_this or librosa."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Generate a full map folder (and zip) from an audio file (WS7).
+    """Generate a full map folder (and zip) from each audio file (WS7).
 
     Notes and lights come from the trained WS6 model when a checkpoint is found, else from
-    the placeholder stub generator and the rule lightshow.
+    the placeholder stub generator and the rule lightshow. Several songs (or a folder) run
+    one after another with the same options; one that fails does not stop the rest, and a
+    summary table follows.
     """
     from bsmapper.generation import (
         GenerateOptions,
@@ -165,8 +207,7 @@ def generate(
     from bsmapper.schema import Characteristic, Difficulty
 
     _setup_logging(verbose)
-    if not audio.is_file():
-        raise typer.BadParameter(f"{audio} is not a file", param_hint="AUDIO")
+    songs = _audio_files(audio)
     if lighting not in STYLES:
         raise typer.BadParameter(f"choose from {', '.join(STYLES)}", param_hint="--lighting")
     for value, choices, hint in (
@@ -241,7 +282,57 @@ def generate(
     def progress(stage: str, fraction: float, message: str) -> None:
         typer.echo(f"[{fraction:4.0%}] {stage:<8} {message}")
 
-    result = pipeline.run(audio, out, opts, zip_output=zip_output, progress=progress)
+    def make_one(song: Path):
+        """Generate, report and (if asked) install one song; returns the result and install."""
+        result = pipeline.run(song, out, opts, zip_output=zip_output, progress=progress)
+        _echo_result(result, pipeline, lighting)
+        if not install:
+            return result, None
+        try:
+            dest = install_map(result.map_dir, game)
+        except (OSError, FileNotFoundError) as e:
+            raise _InstallError(f"Install failed: {e}") from e
+        typer.echo(f"Installed to {dest}")
+        return result, dest
+
+    if len(songs) == 1:
+        try:
+            make_one(songs[0])
+        except _InstallError as e:
+            typer.secho(str(e), fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from e
+        return
+
+    import time
+
+    typer.echo(f"Queued {len(songs)} songs; output in {out}")
+    rows = []  # (song, ok, detail, seconds)
+    started = time.monotonic()
+    for i, song in enumerate(songs, 1):
+        typer.secho(f"\n=== [{i}/{len(songs)}] {song.name}", bold=True)
+        t0 = time.monotonic()
+        try:
+            result, dest = make_one(song)
+        except KeyboardInterrupt:
+            typer.secho("Stopped; the songs after this one were not generated.", err=True)
+            rows.append((song, False, "stopped", time.monotonic() - t0))
+            break
+        except Exception as e:  # keep going with the next song
+            detail = f"{type(e).__name__}: {e}"
+            typer.secho(f"Failed: {detail}", fg=typer.colors.RED, err=True)
+            rows.append((song, False, detail, time.monotonic() - t0))
+            continue
+        n_notes = sum(len(r.dmap.notes) for r in result.difficulties)
+        n_diffs = len(result.difficulties)
+        where = f"installed as {dest.name}" if dest else str(result.zip_path or result.map_dir)
+        detail = f"{n_diffs} difficult{'y' if n_diffs == 1 else 'ies'}, {n_notes} notes, {where}"
+        rows.append((song, True, detail, time.monotonic() - t0))
+    _echo_batch_summary(songs, rows, time.monotonic() - started)
+    if not all(ok for _, ok, _, _ in rows) or len(rows) < len(songs):
+        raise typer.Exit(1)
+
+
+def _echo_result(result, pipeline, lighting: str) -> None:
     bm = result.beatmap
     typer.echo(
         f"\n{bm.song_name} - {bm.song_author or '?'}  ({result.song.bpm:g} BPM, "
@@ -265,13 +356,27 @@ def generate(
     typer.echo(f"Map folder: {result.map_dir}")
     if result.zip_path:
         typer.echo(f"Zip: {result.zip_path}")
-    if install:
-        try:
-            dest = install_map(result.map_dir, game)
-        except (OSError, FileNotFoundError) as e:
-            typer.secho(f"Install failed: {e}", fg=typer.colors.RED, err=True)
-            raise typer.Exit(1) from e
-        typer.echo(f"Installed to {dest}")
+
+
+def _echo_batch_summary(songs: list[Path], rows: list, seconds: float) -> None:
+    done = sum(ok for _, ok, _, _ in rows)
+    failed = len(rows) - done
+    skipped = len(songs) - len(rows)
+    parts = [f"{done} of {len(songs)} songs done"]
+    if failed:
+        parts.append(f"{failed} failed")
+    if skipped:
+        parts.append(f"{skipped} not started")
+    typer.secho(f"\nSummary: {', '.join(parts)} in {_duration(seconds)}", bold=True)
+    width = min(max(len(s.name) for s in songs), 48)
+    typer.echo(f"  {'#':>3}  {'Song':<{width}}  {'Result':<6}  {'Time':>7}  Details")
+    for i, (song, ok, detail, secs) in enumerate(rows, 1):
+        name = song.name if len(song.name) <= width else song.name[: width - 1] + "…"
+        typer.secho(
+            f"  {i:>3}  {name:<{width}}  {'done' if ok else 'FAILED':<6}  "
+            f"{_duration(secs):>7}  {detail}",
+            fg=None if ok else typer.colors.RED,
+        )
 
 
 def _setup_logging(verbose: bool) -> None:

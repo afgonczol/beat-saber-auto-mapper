@@ -184,22 +184,33 @@ export function Preview({ info, map, regenerate }: Props) {
           <a className={`button primary ${busy ? "disabled" : ""}`} href={busy ? undefined : downloadUrl(map.job_id)} download>
             Download .zip
           </a>
-          <InstallButton jobId={map.job_id} revision={map.revision} busy={busy} />
+          <InstallButton jobId={map.job_id} revision={map.revision} busy={busy} installed={info.installed ?? null} />
         </div>
       </aside>
     </div>
   );
 }
 
-function InstallButton({ jobId, revision, busy }: { jobId: string; revision: number; busy: boolean }) {
+function InstallButton({
+  jobId,
+  revision,
+  busy,
+  installed,
+}: {
+  jobId: string;
+  revision: number;
+  busy: boolean;
+  installed: InstallResult | null; // installed by the queue ("install to game when done")
+}) {
   const [installing, setInstalling] = useState(false);
-  const [result, setResult] = useState<InstallResult | null>(null);
+  const [result, setResult] = useState<InstallResult | null>(installed);
   const [error, setError] = useState<string | null>(null);
-  // A regenerated map is not in the game until it is installed again.
+  // A regenerated map is not in the game until it is installed again (the server then
+  // clears `installed`, which may arrive after the new revision).
   useEffect(() => {
-    setResult(null);
+    setResult(installed);
     setError(null);
-  }, [jobId, revision]);
+  }, [jobId, revision, installed?.path]);
 
   const install = () => {
     setInstalling(true);

@@ -1,4 +1,5 @@
-import type { JobEvent, JobInfo } from "../api/client";
+import { useState } from "react";
+import { cancelJob, type JobEvent, type JobInfo } from "../api/client";
 
 const STAGES = [
   { id: "analyze", label: "Analyze audio" },
@@ -17,15 +18,33 @@ export function ProgressBar({ info }: { info: JobInfo }) {
   );
 }
 
-export function ProgressView({ info, events }: { info: JobInfo; events: JobEvent[] }) {
+interface Props {
+  info: JobInfo;
+  events: JobEvent[];
+  /** Songs that run before this one, while it is queued. */
+  ahead?: number | null;
+}
+
+export function ProgressView({ info, events, ahead }: Props) {
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const current = STAGES.findIndex((s) => s.id === info.stage);
   const done = info.status === "done";
   const log = events.filter((e) => e.message).slice(-8);
+  const waiting = ahead ? ` · ${ahead} song${ahead > 1 ? "s" : ""} ahead` : "";
+  const cancel = () => {
+    setCancelling(true);
+    setError(null);
+    cancelJob(info.id).catch((e) => {
+      setError((e as Error).message);
+      setCancelling(false);
+    });
+  };
   return (
     <div className="card progress-card">
       <div className="progress-head">
         <div>
-          <div className="eyebrow">{info.status === "queued" ? "Queued" : "Generating"}</div>
+          <div className="eyebrow">{info.status === "queued" ? `Queued${waiting}` : "Generating"}</div>
           <h2>{info.filename}</h2>
         </div>
         <div className="pct">{Math.round((info.progress ?? 0) * 100)}%</div>
@@ -49,6 +68,18 @@ export function ProgressView({ info, events }: { info: JobInfo; events: JobEvent
           </li>
         ))}
       </ul>
+      {info.install_when_done && <div className="muted">Installs to the game when done.</div>}
+      {error && <div className="error">{error}</div>}
+      {(info.status === "queued" || info.status === "running") && (
+        <button
+          className="ghost cancel"
+          disabled={cancelling}
+          onClick={cancel}
+          title={info.status === "running" ? "Stops at the next pipeline step" : "Take it off the queue"}
+        >
+          {cancelling || info.message === "Cancelling…" ? "Cancelling…" : "Cancel"}
+        </button>
+      )}
     </div>
   );
 }
