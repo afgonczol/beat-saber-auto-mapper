@@ -142,7 +142,9 @@ def parse(data: dict[str, Any], report: ReadReport) -> ParsedDifficulty:
     )
 
     fx_collection = as_dict(first(data, "_fxEventsCollection", "_fxEventsCollections", default={}))
-    fx_events = as_list(fx_collection.get("_fl"))
+    fx_events = resolve_fx_events(
+        as_list(fx_collection.get("_fl")), as_list(fx_collection.get("_il"))
+    )
     for kind, key in GROUP_COLLECTIONS.items():
         for raw in as_list(data.get(key)):
             try:
@@ -169,6 +171,30 @@ def parse(data: dict[str, Any], report: ReadReport) -> ParsedDifficulty:
 
     parsed.sort()
     return parsed
+
+
+def resolve_fx_events(float_events: list[Any], int_events: list[Any]) -> list[Any]:
+    """The fx events a box index can refer to.
+
+    Whether a vfx box reads ``_fl`` or ``_il`` depends on the environment's light group,
+    which the file does not say. Most groups are float groups, so ``_fl`` wins; an index
+    only ``_il`` covers falls back to that int event, read as a float one.
+    """
+    events = list(float_events)
+    for raw in int_events[len(events) :]:
+        raw = as_dict(raw)
+        events.append({"b": raw.get("b", 0), "p": raw.get("p", 0), "i": 0, "v": raw.get("v", 0)})
+    return events
+
+
+def int_fx_events(fx_events: list[dict]) -> list[dict]:
+    """``_il`` mirroring ``_fl`` index for index, so every vfx box index is valid whether
+    the environment's group is a float or an int group (the game crashes on a missing
+    ``_il`` index, e.g. in TheWeekndEnvironment)."""
+    return [
+        {"b": event["b"], "p": int(event.get("p", 0)), "v": round(event.get("v", 0))}
+        for event in fx_events
+    ]
 
 
 def box_group_json(group: EventBoxGroup, fx_events: list[dict]) -> dict[str, Any]:
@@ -271,6 +297,6 @@ def write(dmap: DifficultyMap, lightshow: Lightshow, bpm_changes: list[BpmChange
         "colorBoostBeatmapEvents": [{"b": out(e.beat), "o": e.on} for e in lightshow.boost_events],
         **groups,
         "basicEventTypesWithKeywords": {"d": []},
-        "_fxEventsCollection": {"_fl": fx_events, "_il": []},
+        "_fxEventsCollection": {"_fl": fx_events, "_il": int_fx_events(fx_events)},
         "useNormalEventsAsCompatibleEvents": True,
     }
