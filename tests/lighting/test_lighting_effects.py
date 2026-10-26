@@ -197,6 +197,21 @@ def test_state_stops_at_a_box_that_sets_every_light():
     assert [b["e"][0]["c"] for b in state[("color", 0)]] == [1, 2]
 
 
+def test_environment_is_picked_per_song(tmp_path: Path):
+    # A 20-song web UI batch (all seed 0) came out all TheWeekndEnvironment.
+    root = tmp_path / "fx"
+    envs = ["LizzoEnvironment", "PyroEnvironment", "TheWeekndEnvironment", "RockMixtapeEnvironment"]
+    for env in envs:
+        make_library(root, env, {"busy": busy_source()})
+    effects = EffectRenderer(root, seed=0)
+    songs = [f"Song {i} - Artist" for i in range(20)]
+    picks = [effects.pick_environment(song) for song in songs]
+    assert set(picks) == set(envs)
+    assert picks == [effects.pick_environment(song) for song in songs]  # stable per song
+    rerolls = {EffectRenderer(root, seed=s).pick_environment(songs[0]) for s in range(20)}
+    assert len(rerolls) > 1  # another seed can re-roll a song's environment
+
+
 def test_renderer_picks_and_renders_an_effect_environment(tmp_path: Path):
     root = tmp_path / "fx"
     sources = {"busy": busy_source(), "quiet": quiet_source()}

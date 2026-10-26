@@ -247,7 +247,8 @@ Bars are 4 beats from beat 0, which the beat grid puts on a downbeat.
 
 **Defaults.**
 - **Environment:** with no `--environment`, v3 picks one of the libraries with at least 30
-  maps, using the seed. Without a library, the default stays WeaveEnvironment with the
+  maps, using the seed and the song's title and artist. So songs made with the same seed
+  get different environments, and another seed can re-roll a song's. Without a library, the default stays WeaveEnvironment with the
   profile renderer.
 - **Turning it off:** `--no-light-effects` (`GenerateOptions.light_effects=False`) keeps
   the template. Other environments with a profile also keep it.

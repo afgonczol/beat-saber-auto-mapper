@@ -59,7 +59,7 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 | `--light-style` | The look of the model's lights, with a `light_v2` checkpoint: `auto` (picked for the song; another seed may pick another), `pulse`, `calm`, `scenes`, `flash`, `accent`, or `none` (the model's own choice). | `--light-style calm` |
 | `--lighting-source` | `model` or `rules`. If the model's lights are too jittery for a song, `rules` gives a calmer, simpler show. | `--lighting-source rules` |
 | `--seed` | A different seed gives a different map for the same song. | `--seed 7` |
-| `--environment` | The Info.dat environment. With the human effect library (below) the default is one of its environments, picked with the seed. | `--environment LizzoEnvironment` |
+| `--environment` | The Info.dat environment. With the human effect library (below) the default is one of its environments, picked for the song and the seed. | `--environment LizzoEnvironment` |
 | `--no-light-effects` | Use the old fixed group-lighting template instead of human effects. | `--no-light-effects` |
 
 Run `bsmapper generate --help` for everything.

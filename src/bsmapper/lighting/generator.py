@@ -96,12 +96,13 @@ def environment_for(
     current: str,
     requested: str | None = None,
     effects: EffectRenderer | None = None,
+    song: str = "",
 ) -> str:
     """The environment a map should use for ``style``.
 
     ``requested`` wins when it suits the style. Otherwise ``current`` is kept when it
     suits, else the default for the style: for v3 a group-lighting environment with a
-    human effect library (picked with the effects' seed) or else ``WeaveEnvironment``,
+    human effect library (picked with the effects' seed and ``song``) or else ``WeaveEnvironment``,
     a legacy environment for vanilla and Chroma.
     """
     for candidate in (requested, current):
@@ -116,7 +117,7 @@ def environment_for(
             log.warning("environment %s does not suit %s lighting", candidate, style)
     if style != "v3":
         return DEFAULT_LEGACY_ENVIRONMENT
-    picked = effects.pick_environment() if effects is not None else None
+    picked = effects.pick_environment(song) if effects is not None else None
     return picked or DEFAULT_V3_ENVIRONMENT
 
 
@@ -132,6 +133,7 @@ def light_beatmap(
     ``beatmap`` (shared v4-style lightshow; difficulties keep ``lightshow=None``)."""
     generator = generator or RuleLightingGenerator()
     effects = getattr(generator, "effects", None)
-    beatmap.environment = environment_for(style, beatmap.environment, environment, effects)
+    song = f"{beatmap.song_name} - {beatmap.song_author}"
+    beatmap.environment = environment_for(style, beatmap.environment, environment, effects, song)
     beatmap.lightshow = generator.generate(analysis, beatmap, style)
     return beatmap
