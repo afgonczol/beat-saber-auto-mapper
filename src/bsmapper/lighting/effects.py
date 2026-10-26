@@ -36,6 +36,7 @@ import gzip
 import json
 import logging
 import math
+import zlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -630,11 +631,14 @@ class EffectRenderer:
         big = sorted(e for e, n in sizes.items() if n >= AUTO_MIN_MAPS)
         return big or sorted(sizes)
 
-    def pick_environment(self) -> str | None:
+    def pick_environment(self, song: str = "") -> str | None:
+        """One of ``auto_environments``, picked with the seed and ``song`` (e.g. its title and
+        artist), so a batch made with one seed doesn't give every song the same environment."""
         envs = self.auto_environments()
         if not envs:
             return None
-        return envs[int(np.random.default_rng(self.seed).integers(len(envs)))]
+        rng = np.random.default_rng([self.seed, zlib.crc32(song.encode("utf-8"))])
+        return envs[int(rng.integers(len(envs)))]
 
     def render(
         self,
