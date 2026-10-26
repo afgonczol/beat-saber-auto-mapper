@@ -274,7 +274,8 @@ class MapState:
 
     def _prune(self) -> None:
         now = self.last_beat
-        self._walls = [w for w in self._walls if w.end_beat >= now - EPS_BEAT]
+        horizon = self.seconds(now) - self.config.walls.min_note_gap_s
+        self._walls = [w for w in self._walls if w.end_s >= horizon - 1e-9]  # note_behind_wall
         horizon = self.seconds(now) - self.config.walls.min_dodge_gap_s
         self._dodge_walls = [w for w in self._dodge_walls if w.end_s >= horizon]
         horizon = self.seconds(now) - self.config.walls.boxin_window_s
@@ -325,6 +326,22 @@ class MapState:
                             note.beat,
                             f"note at ({note.x},{note.y}) is inside a wall from beat "
                             f"{w.obstacle.beat:g}",
+                        )
+                    )
+                    break
+        if self._on("note_behind_wall"):
+            gap_s = self.config.walls.min_note_gap_s
+            for w in self._walls:
+                o = w.obstacle
+                in_cell = o.x <= note.x < o.x + o.width and o.y <= note.y < o.y + o.height
+                if in_cell and -1e-9 <= t - w.end_s < gap_s - 1e-9:
+                    issues.append(
+                        self._issue(
+                            "note_behind_wall",
+                            note.beat,
+                            f"note at ({note.x},{note.y}) comes {(t - w.end_s) * 1000:.0f} ms "
+                            f"behind a wall from beat {o.beat:g}, hidden by it "
+                            f"(min {gap_s * 1000:.0f} ms)",
                         )
                     )
                     break

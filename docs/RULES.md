@@ -15,6 +15,7 @@ rules are hard constraints (decode masks), **warning** rules are only reported.
 | `vision_block` | warning | A note 50–250 ms behind a centre (x 1–2, y 1) note or bomb on the same side |
 | `crossover` | error | Red two or more columns right of blue at the same time |
 | `note_in_wall` | error | A note inside an active wall |
+| `note_behind_wall` | error | A note in a cell a wall left less than 200 ms earlier: it approaches hidden behind the wall |
 | `nps_ceiling` | error | Notes/s over a 2 s window above the difficulty's ceiling (Easy 6 … Expert+ 20); reported once per dense passage |
 | `wall_duration` | warning | Walls shorter than 13.8 ms |
 | `dodge_gap` | error | Less than 150 ms between dodge walls that need the head in different places (left, right, crouch) |
@@ -82,6 +83,14 @@ No human wall closes both centre columns on its own. Closing three or more of th
 columns within 0.3 s is common (5.6% of human difficulties: corridors with a centre wall),
 so that is not a rule. Short centre walls are common too (23% of human difficulties), so
 they are not banned either. Generation drops the later wall of a box-in (`fix_with_rules`).
+
+A note in a cell that a wall has just left travels right behind the wall, so the wall
+hides it until the last moment. A playtest of a generated Drop It Like It's Hot Expert
+had head-height walls sweep across three columns, then a top-row note 170 ms after the
+wall in its cell. `note_behind_wall` flags a note less than 200 ms behind a wall in its
+cell. In 1,530 human difficulties, 0.31 notes per 1000 (377) do this, in 7.8% of
+difficulties; in 132 generated ones 0.41 per 1000, in 26.5%. None are under 100 ms in
+either. Generation moves the note to another cell or drops it (`fix_with_rules`).
 
 ## Arcs and chains
 

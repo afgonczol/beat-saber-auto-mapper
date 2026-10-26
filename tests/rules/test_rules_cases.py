@@ -150,10 +150,23 @@ def test_note_in_wall():
     wall = Obstacle(0, 2, 0, 0, 1, 5)
     assert "note_in_wall" in rules_of([red(1, 0, 2, D.DOWN)], obstacles=[wall])
     assert rules_of([red(1, 1, 0, D.DOWN)], obstacles=[wall]) == set()
-    assert rules_of([red(2, 0, 0, D.DOWN)], obstacles=[wall]) == set()  # wall has ended
+    assert rules_of([red(2.5, 0, 0, D.DOWN)], obstacles=[wall]) == set()  # wall has ended
     crouch = Obstacle(0, 2, 0, 2, 4, 3)
     assert "note_in_wall" in rules_of([blue(1, 3, 2, D.UP)], obstacles=[crouch])
     assert rules_of([blue(1, 3, 1, D.UP)], obstacles=[crouch]) == set()
+
+
+def test_note_behind_wall():
+    # The Drop It Like It's Hot Expert playtest case: a top-row note 0.17 s after a
+    # head-height wall left its cell (120 BPM here: 1/3 beat = 0.167 s).
+    top = Obstacle(0, 0.25, 1, 2, 1, 3)
+    assert rules_of([red(0.25 + 1 / 3, 1, 2, D.UP)], obstacles=[top]) == {"note_behind_wall"}
+    assert rules_of([red(0.25, 1, 2, D.UP)], obstacles=[top]) == {"note_behind_wall"}  # at its end
+    assert rules_of([red(0.25 + 0.5, 1, 2, D.UP)], obstacles=[top]) == set()  # 0.25 s later
+    assert rules_of([red(0.25 + 1 / 3, 1, 1, D.DOWN)], obstacles=[top]) == set()  # under it
+    assert rules_of([red(0.25 + 1 / 3, 0, 2, D.UP)], obstacles=[top]) == set()  # next column
+    full = Obstacle(0, 1, 3, 0, 1, 5)
+    assert rules_of([blue(1.25, 3, 0, D.DOWN)], obstacles=[full]) == {"note_behind_wall"}
 
 
 def test_vision_block_is_a_warning():

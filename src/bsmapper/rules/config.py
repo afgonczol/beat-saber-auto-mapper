@@ -30,6 +30,7 @@ RULES = (
     "vision_block",
     "crossover",
     "note_in_wall",
+    "note_behind_wall",
     "nps_ceiling",
     "wall_duration",
     "dodge_gap",
@@ -121,6 +122,8 @@ class WallConfig:
     # Walls of any duration that close both centre columns at head height (left and
     # right lean) closer than this together leave nowhere to stand.
     boxin_window_s: float = 0.3
+    # A note in a cell a wall left less than this long ago approaches hidden behind it.
+    min_note_gap_s: float = 0.2
 
 
 @dataclass(frozen=True, slots=True)
