@@ -74,6 +74,7 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "chains": None,
         "njs": None,
         "reaction_time": None,
+        "environment": None,
     }
     info = upload(client, arcs="false", chains="true")
     assert (info["options"]["arcs"], info["options"]["chains"]) == (False, True)
@@ -81,6 +82,39 @@ def test_create_job_returns_options(client: TestClient) -> None:
     r = client.post("/api/jobs", files={"audio": ("a.mp3", b"x", "audio/mpeg")},
                     data={"light_style": "disco"})  # fmt: skip
     assert r.status_code == 422
+
+
+def test_environment_option(client: TestClient) -> None:
+    info = upload(client, environment="LizzoEnvironment")
+    assert info["options"]["environment"] == "LizzoEnvironment"
+    r = client.post("/api/jobs", files={"audio": ("a.mp3", b"x", "audio/mpeg")},
+                    data={"environment": "../evil"})  # fmt: skip
+    assert r.status_code == 422
+
+
+def test_environment_list(client: TestClient, tmp_path: Path) -> None:
+    from bsmapper.server.app import environment_label, environment_options
+
+    assert environment_label("TheWeekndEnvironment") == "The Weeknd"
+    assert environment_label("Dragons2Environment") == "Dragons 2"
+    assert environment_label("EDMEnvironment") == "EDM"
+    root = tmp_path / "fx"
+    for env, n in (("LizzoEnvironment", 40), ("PyroEnvironment", 31), ("QueenEnvironment", 5)):
+        (root / env).mkdir(parents=True)
+        index = {"maps": [{"key": str(i)} for i in range(n)]}
+        (root / env / "index.json").write_text(json.dumps(index), encoding="utf-8")
+    envs = environment_options(root)
+    assert [(e.name, e.maps, e.auto) for e in envs[:3]] == [
+        ("LizzoEnvironment", 40, True),
+        ("PyroEnvironment", 31, True),
+        ("QueenEnvironment", 5, False),
+    ]
+    assert {e.name for e in envs[3:]} >= {"WeaveEnvironment"}  # template environments
+    assert all(e.maps == 0 and not e.auto for e in envs[3:])
+    without = environment_options(None)
+    assert [e.name for e in without if e.auto] == ["WeaveEnvironment"]
+    r = client.get("/api/environments")
+    assert r.status_code == 200 and all("label" in e for e in r.json())
 
 
 def test_defaults_and_validation(client: TestClient) -> None:

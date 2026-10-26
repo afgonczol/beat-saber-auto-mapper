@@ -115,6 +115,9 @@ bsmapper serve
 In the page:
 1. Drop in a song.
 2. Pick difficulties, modes, lighting, intensity, style, repetition, arcs and chains.
+   With v3 lighting, **Environment** picks the game environment (its look and colours).
+   **Auto** picks one for each song; "few maps" marks environments whose light
+   effects come from fewer than 30 human maps.
 3. Watch the progress.
 4. Preview the map in 3D, synced to the music.
 5. Click **Download** or **Install to game**. You can regenerate a single difficulty with

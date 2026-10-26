@@ -79,6 +79,22 @@ class JobOptions(BaseModel):
         description="Seconds from spawn to strike for Expert and Expert+ (lower difficulties "
         "keep their defaults); null = defaults (0.8 s and 0.7 s).",
     )
+    environment: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9]{1,64}$",
+        description="Info.dat environment (its look and colours), e.g. LizzoEnvironment, from "
+        "GET /api/environments; null = picked for each song.",
+    )
+
+
+class EnvironmentInfo(BaseModel):
+    name: str = Field(description="Info.dat environment name, e.g. TheWeekndEnvironment.")
+    label: str = Field(description="Display name, e.g. The Weeknd.")
+    maps: int = Field(
+        description="Human maps its light effects come from; 0 = the built-in group-lighting "
+        "template."
+    )
+    auto: bool = Field(description="One of the environments picked when none is chosen.")
 
 
 class InstallResult(BaseModel):

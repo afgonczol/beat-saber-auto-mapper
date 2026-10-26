@@ -6,6 +6,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,6 +32,7 @@ from bsmapper.schema import Characteristic, Difficulty
 from bsmapper.server.install import InstallUnavailable, MapNotReady
 from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager, JobNotActiveError
 from bsmapper.server.models import (
+    EnvironmentInfo,
     ErrorResponse,
     InstallResult,
     JobEvent,
@@ -98,6 +100,34 @@ def create_app(
     return app
 
 
+def environment_label(name: str) -> str:
+    """``TheWeekndEnvironment`` -> ``The Weeknd``, ``Dragons2Environment`` -> ``Dragons 2``."""
+    base = re.sub(r"Environment$", "", name) or name
+    return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=[0-9])", " ", base)
+
+
+def environment_options(effects_root: Path | None) -> list[EnvironmentInfo]:
+    """``GET /api/environments`` for the effect libraries under ``effects_root`` (if any)."""
+    from bsmapper.lighting import DEFAULT_V3_ENVIRONMENT, EffectRenderer
+    from bsmapper.lighting.profiles import available_environments
+
+    out: list[EnvironmentInfo] = []
+    if effects_root is not None:
+        effects = EffectRenderer(effects_root)
+        auto = set(effects.auto_environments())
+        out = [
+            EnvironmentInfo(name=env, label=environment_label(env), maps=n, auto=env in auto)
+            for env, n in effects.map_counts().items()
+        ]
+        out.sort(key=lambda e: (-e.maps, e.label))
+    known = {e.name for e in out}
+    for env in available_environments():
+        if env not in known:
+            auto = not known and env == DEFAULT_V3_ENVIRONMENT
+            out.append(EnvironmentInfo(name=env, label=environment_label(env), maps=0, auto=auto))
+    return out
+
+
 def _api(manager: JobManager) -> APIRouter:
     router = APIRouter(tags=["jobs"])
 
@@ -110,6 +140,14 @@ def _api(manager: JobManager) -> APIRouter:
     def snapshot(job: Job) -> JobInfo:
         with job.lock:
             return job.info.model_copy(deep=True)
+
+    @router.get("/environments", tags=["options"])
+    def list_environments() -> list[EnvironmentInfo]:
+        """Environments v3 lighting can use: those with human light effects (most source
+        maps first), then those with the built-in template."""
+        from bsmapper.generation.runtime import find_light_effects
+
+        return environment_options(find_light_effects())
 
     @router.get("/jobs")
     def list_jobs() -> list[JobInfo]:
@@ -182,6 +220,14 @@ def _api(manager: JobManager) -> APIRouter:
                 "defaults.",
             ),
         ] = None,
+        environment: Annotated[
+            str | None,
+            Form(
+                pattern=r"^[A-Za-z0-9]{1,64}$",
+                description="Info.dat environment for v3 lighting (GET /api/environments); "
+                "omit to pick one for each song.",
+            ),
+        ] = None,
         install: Annotated[
             Literal["true", "false"],
             Form(description="Copy the map into the game as soon as it is generated."),
@@ -205,6 +251,7 @@ def _api(manager: JobManager) -> APIRouter:
             chains=None if chains is None else chains == "true",
             njs=njs,
             reaction_time=reaction_time,
+            environment=environment,
         )
         try:
             job = manager.submit(

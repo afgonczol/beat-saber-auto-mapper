@@ -10,6 +10,7 @@ export type MapPreview = S["MapPreview"];
 export type DifficultyWarning = S["DifficultyWarning"];
 export type RegenerateRequest = S["RegenerateRequest"];
 export type InstallResult = S["InstallResult"];
+export type EnvironmentInfo = S["EnvironmentInfo"];
 export type Beatmap = S["Beatmap"];
 export type DifficultyMap = S["DifficultyMap"];
 export type Lightshow = S["Lightshow"];
@@ -74,11 +75,17 @@ export async function createJob(audio: File, options: JobOptions, install = fals
   if (options.chains != null) form.append("chains", String(options.chains));
   if (options.njs != null) form.append("njs", String(options.njs));
   if (options.reaction_time != null) form.append("reaction_time", String(options.reaction_time));
+  if (options.environment != null) form.append("environment", options.environment);
   return json(await fetch(`${BASE}/jobs`, { method: "POST", body: form }));
 }
 
 export async function getJob(id: string): Promise<JobInfo> {
   return json(await fetch(`${BASE}/jobs/${id}`));
+}
+
+/** Environments v3 lighting can use: human light effects (most source maps first), then the template ones. */
+export async function listEnvironments(): Promise<EnvironmentInfo[]> {
+  return json(await fetch(`${BASE}/environments`));
 }
 
 /** Every job on the server, oldest first (the order they run in). */
