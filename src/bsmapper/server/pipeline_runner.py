@@ -68,6 +68,7 @@ def _options(options: JobOptions) -> GenerateOptions:
         walls=objects.get("walls"),
         arcs=options.arcs if options.arcs is not None else objects.get("arcs"),
         chains=options.chains if options.chains is not None else objects.get("chains"),
+        environment=options.environment,
     )
 
 

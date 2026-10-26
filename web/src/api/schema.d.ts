@@ -4,6 +4,27 @@
  */
 
 export interface paths {
+    "/api/environments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Environments
+         * @description Environments v3 lighting can use: those with human light effects (most source
+         *     maps first), then those with the built-in template.
+         */
+        get: operations["list_environments_api_environments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -403,6 +424,11 @@ export interface components {
              */
             reaction_time?: number | null;
             /**
+             * Environment
+             * @description Info.dat environment for v3 lighting (GET /api/environments); omit to pick one for each song.
+             */
+            environment?: string | null;
+            /**
              * Install
              * @description Copy the map into the game as soon as it is generated.
              * @default false
@@ -518,6 +544,29 @@ export interface components {
             characteristic: components["schemas"]["Characteristic"];
             difficulty: components["schemas"]["Difficulty"];
             issue: components["schemas"]["Issue"];
+        };
+        /** EnvironmentInfo */
+        EnvironmentInfo: {
+            /**
+             * Name
+             * @description Info.dat environment name, e.g. TheWeekndEnvironment.
+             */
+            name: string;
+            /**
+             * Label
+             * @description Display name, e.g. The Weeknd.
+             */
+            label: string;
+            /**
+             * Maps
+             * @description Human maps its light effects come from; 0 = the built-in group-lighting template.
+             */
+            maps: number;
+            /**
+             * Auto
+             * @description One of the environments picked when none is chosen.
+             */
+            auto: boolean;
         };
         /** ErrorResponse */
         ErrorResponse: {
@@ -712,6 +761,11 @@ export interface components {
              * @description Seconds from spawn to strike for Expert and Expert+ (lower difficulties keep their defaults); null = defaults (0.8 s and 0.7 s).
              */
             reaction_time?: number | null;
+            /**
+             * Environment
+             * @description Info.dat environment (its look and colours), e.g. LizzoEnvironment, from GET /api/environments; null = picked for each song.
+             */
+            environment?: string | null;
         };
         /**
          * JobStatus
@@ -868,6 +922,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_environments_api_environments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentInfo"][];
+                };
+            };
+        };
+    };
     list_jobs_api_jobs_get: {
         parameters: {
             query?: never;

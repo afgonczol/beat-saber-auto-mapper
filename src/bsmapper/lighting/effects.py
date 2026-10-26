@@ -622,12 +622,17 @@ class EffectRenderer:
             self._loaded[environment] = EffectLibrary(self.libraries[environment])
         return self._loaded[environment]
 
-    def auto_environments(self) -> list[str]:
-        """Environments with at least ``AUTO_MIN_MAPS`` source maps, else all of them."""
+    def map_counts(self) -> dict[str, int]:
+        """Environment -> number of human source maps in its library (reads only the index)."""
         sizes = {}
         for env, folder in self.libraries.items():
             index = json.loads((folder / INDEX_FILE).read_text(encoding="utf-8"))
             sizes[env] = len(index["maps"])
+        return sizes
+
+    def auto_environments(self) -> list[str]:
+        """Environments with at least ``AUTO_MIN_MAPS`` source maps, else all of them."""
+        sizes = self.map_counts()
         big = sorted(e for e, n in sizes.items() if n >= AUTO_MIN_MAPS)
         return big or sorted(sizes)
 

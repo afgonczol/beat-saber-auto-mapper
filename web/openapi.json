@@ -6,6 +6,33 @@
     "version": "0.0.1"
   },
   "paths": {
+    "/api/environments": {
+      "get": {
+        "tags": [
+          "jobs",
+          "options"
+        ],
+        "summary": "List Environments",
+        "description": "Environments v3 lighting can use: those with human light effects (most source\nmaps first), then those with the built-in template.",
+        "operationId": "list_environments_api_environments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EnvironmentInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Environments Api Environments Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs": {
       "get": {
         "tags": [
@@ -1033,6 +1060,19 @@
             "title": "Reaction Time",
             "description": "Seconds from spawn to strike for Expert and Expert+; omit for defaults."
           },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment",
+            "description": "Info.dat environment for v3 lighting (GET /api/environments); omit to pick one for each song."
+          },
           "install": {
             "type": "string",
             "enum": [
@@ -1321,6 +1361,38 @@
         ],
         "title": "DifficultyWarning",
         "description": "A playability issue (``interfaces.Issue``) tagged with the difficulty it belongs to."
+      },
+      "EnvironmentInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Info.dat environment name, e.g. TheWeekndEnvironment."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Display name, e.g. The Weeknd."
+          },
+          "maps": {
+            "type": "integer",
+            "title": "Maps",
+            "description": "Human maps its light effects come from; 0 = the built-in group-lighting template."
+          },
+          "auto": {
+            "type": "boolean",
+            "title": "Auto",
+            "description": "One of the environments picked when none is chosen."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "maps",
+          "auto"
+        ],
+        "title": "EnvironmentInfo"
       },
       "ErrorResponse": {
         "properties": {
@@ -1700,6 +1772,19 @@
             ],
             "title": "Reaction Time",
             "description": "Seconds from spawn to strike for Expert and Expert+ (lower difficulties keep their defaults); null = defaults (0.8 s and 0.7 s)."
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment",
+            "description": "Info.dat environment (its look and colours), e.g. LizzoEnvironment, from GET /api/environments; null = picked for each song."
           }
         },
         "type": "object",

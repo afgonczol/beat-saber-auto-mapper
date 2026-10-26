@@ -97,6 +97,15 @@ def test_job_options_set_note_timing(monkeypatch, tmp_path: Path) -> None:
         JobOptions(reaction_time=5.0)
 
 
+def test_job_environment_reaches_the_pipeline(monkeypatch, tmp_path: Path) -> None:
+    from bsmapper.server.models import JobOptions
+    from bsmapper.server.pipeline_runner import _options
+
+    monkeypatch.setenv("BSMAPPER_CONFIG", str(tmp_path / "none.toml"))
+    assert _options(JobOptions(environment="QueenEnvironment")).environment == "QueenEnvironment"
+    assert _options(JobOptions()).environment is None
+
+
 def test_bad_upload_fails_the_job(tmp_path: Path) -> None:
     runner = PipelineJobRunner(Pipeline(tracker="librosa"))
     app = create_app(runner, tmp_path / "work", tmp_path / "no-ui")

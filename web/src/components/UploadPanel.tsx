@@ -6,8 +6,10 @@ import {
   MODE_LABEL,
   createJob,
   isAudioFile,
+  listEnvironments,
   type Characteristic,
   type Difficulty,
+  type EnvironmentInfo,
   type JobInfo,
   type JobOptions,
   type LightingStyle,
@@ -111,6 +113,9 @@ export function UploadPanel({ onQueued }: Props) {
   const [difficulties, setDifficulties] = useState<Difficulty[]>(["Hard", "Expert", "ExpertPlus"]);
   const [lighting, setLighting] = useState<LightingStyle>("v3");
   const [lightStyle, setLightStyle] = useState<LightStyle | "">("");
+  // v3 environment (look and colours); "" = picked for each song.
+  const [environment, setEnvironment] = useState("");
+  const [environments, setEnvironments] = useState<EnvironmentInfo[]>([]);
   const [useStyle, setUseStyle] = useState(true);
   const [style, setStyle] = useState(0.5);
   const [seed, setSeed] = useState(0);
@@ -133,6 +138,7 @@ export function UploadPanel({ onQueued }: Props) {
   useEffect(() => {
     // Not in React's attribute types; lets the second picker choose a whole folder.
     folderInput.current?.setAttribute("webkitdirectory", "");
+    listEnvironments().then(setEnvironments, () => setEnvironments([]));
   }, []);
 
   // Add songs to the batch (duplicates ignored); anything that is not audio is skipped.
@@ -169,6 +175,7 @@ export function UploadPanel({ onQueued }: Props) {
       seed,
       reaction_time: reactionTime === "" ? null : Number(reactionTime),
       njs: njs === "" ? null : Number(njs),
+      environment: lighting === "v3" && environment !== "" ? environment : null,
     };
     // One upload at a time: the first song starts generating while the rest upload.
     const queued: JobInfo[] = [];
@@ -353,6 +360,35 @@ export function UploadPanel({ onQueued }: Props) {
               ))}
             </select>
           </label>
+          {lighting === "v3" && environments.length > 0 && (
+            <label className="light-style" title="The game environment: its look and colours">
+              Environment{" "}
+              <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
+                <option value="">Auto (picked for each song)</option>
+                <optgroup label="Human light effects">
+                  {environments
+                    .filter((e) => e.maps > 0)
+                    .map((e) => (
+                      <option key={e.name} value={e.name} title={`Effects from ${e.maps} human maps`}>
+                        {e.label}
+                        {e.auto ? "" : " (few maps)"}
+                      </option>
+                    ))}
+                </optgroup>
+                {environments.some((e) => e.maps === 0) && (
+                  <optgroup label="Built-in lighting template">
+                    {environments
+                      .filter((e) => e.maps === 0)
+                      .map((e) => (
+                        <option key={e.name} value={e.name}>
+                          {e.label}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+          )}
         </fieldset>
 
         <fieldset>
