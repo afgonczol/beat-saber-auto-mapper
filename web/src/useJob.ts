@@ -17,6 +17,8 @@ export interface JobState {
   map: MapPreview | null;
   error: string | null;
   regenerate: (req: RegenerateRequest) => Promise<void>;
+  /** Fetch the job and its map again (after changing it outside a run, e.g. renaming). */
+  reload: () => Promise<void>;
 }
 
 /** Load a job, follow its progress over SSE, and fetch the map whenever a run finishes. */
@@ -92,5 +94,12 @@ export function useJob(id: string | null): JobState {
     [id, follow],
   );
 
-  return { info, events, map, error, regenerate };
+  const reload = useCallback(async () => {
+    if (!id) return;
+    const [job, m] = await Promise.all([getJob(id), getMap(id)]);
+    setInfo(job);
+    setMap(m);
+  }, [id]);
+
+  return { info, events, map, error, regenerate, reload };
 }

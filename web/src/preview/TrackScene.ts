@@ -58,6 +58,7 @@ export class TrackScene {
   private links: TimedLink[] = [];
   private rotations: { t: number; yaw: number }[] = [];
   private njs = 16;
+  private spawnS: number | null = null; // like the game: notes appear this long before their time
   private camYaw = 0;
   private lastFrame = performance.now();
 
@@ -119,6 +120,12 @@ export class TrackScene {
     this.resize.observe(container);
     this.fit();
     this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  /** Show objects only from their in-game spawn (reaction time, seconds), or as far as the
+   * track reaches (null). */
+  setSpawn(seconds: number | null): void {
+    this.spawnS = seconds;
   }
 
   setMap(beatmap: Beatmap, dmap: DifficultyMap, lightshow: Lightshow): void {
@@ -210,7 +217,7 @@ export class TrackScene {
     const wall = performance.now();
     const dt = Math.min(0.1, (wall - this.lastFrame) / 1000);
     this.lastFrame = wall;
-    const ahead = FAR_Z / this.njs;
+    const ahead = Math.min(FAR_Z / this.njs, this.spawnS ?? Infinity);
     const z = (t: number) => -(t - now) * this.njs;
 
     // Notes are "cut" at the player; bombs and walls fly past.

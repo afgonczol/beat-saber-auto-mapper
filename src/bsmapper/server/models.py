@@ -85,6 +85,16 @@ class JobOptions(BaseModel):
         description="Info.dat environment (its look and colours), e.g. LizzoEnvironment, from "
         "GET /api/environments; null = picked for each song.",
     )
+    title: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Song title in the map; null = from the file's tags, else its name.",
+    )
+    artist: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Song artist in the map; null = from the file's tags, else its name.",
+    )
 
 
 class EnvironmentInfo(BaseModel):
@@ -102,6 +112,14 @@ class InstallResult(BaseModel):
     warnings: list[str] = Field(
         default=[], description="Things the player should know, e.g. Chroma is not installed."
     )
+
+
+class Feedback(BaseModel):
+    """What the player thought of the map after playing it (docs/PLAYTEST.md)."""
+
+    rating: Literal[-1, 0, 1] = Field(default=0, description="1 = good, -1 = needs work, 0 = none.")
+    note: str = Field(default="", max_length=4000, description="What they noticed.")
+    updated_at: datetime | None = Field(default=None, description="Set by the server.")
 
 
 class JobInfo(BaseModel):
@@ -128,6 +146,16 @@ class JobInfo(BaseModel):
     last_seq: int = Field(
         default=0, description="seq of the latest event; pass it as ?after= to follow new ones."
     )
+    title: str = Field(default="", description="Song title of the generated map ('' before).")
+    artist: str = Field(default="", description="Song artist of the generated map.")
+    started_at: datetime | None = Field(default=None, description="When the latest run started.")
+    finished_at: datetime | None = Field(
+        default=None, description="When the latest run ended (done, failed or cancelled)."
+    )
+    source_id: str | None = Field(
+        default=None, description="The job this one was remade from (POST .../rerun)."
+    )
+    feedback: Feedback | None = Field(default=None, description="Playtest rating and notes.")
 
 
 class JobEvent(BaseModel):
@@ -167,6 +195,51 @@ class RegenerateRequest(BaseModel):
     difficulty: Difficulty
     seed: int
     temperature: float = Field(default=1.0, gt=0.0, le=2.0)
+
+
+class RerunRequest(BaseModel):
+    """Make the song again as a new job, from the upload the server already has."""
+
+    options: JobOptions | None = Field(
+        default=None, description="Options for the new job; null = the same as the source job."
+    )
+    install: bool = Field(default=False, description="Copy the new map into the game when done.")
+
+
+class SongInfo(BaseModel):
+    """The song title and artist the game shows for the map."""
+
+    title: str = Field(min_length=1, max_length=200, pattern=r"\S")
+    artist: str = Field(default="", max_length=200)
+
+
+class InstallTarget(BaseModel):
+    path: str = Field(description="Beat Saber's CustomLevels folder (from the config file).")
+    found: bool = Field(description="The folder exists, so maps can be installed.")
+    chroma: bool = Field(description="The Chroma mod is installed.")
+    config: str = Field(description="The config file that sets the folder.")
+    error: str | None = Field(default=None, description="Why the config could not be read.")
+
+
+class JumpDefaults(BaseModel):
+    njs: float
+    reaction_time: float = Field(description="Seconds from spawn to strike.")
+
+
+class ServerSettings(BaseModel):
+    """What the server generates with when a job leaves an option out."""
+
+    generator: str = Field(description="Where notes come from: model, stub or mock.")
+    generator_detail: str = Field(default="", description="Checkpoint, or why it fell back.")
+    intensity: float
+    repetition: float | None = Field(description="null = the learned amount.")
+    light_style: str
+    arcs: bool | None = Field(description="null = from Hard up.")
+    chains: bool | None = Field(description="null = from Expert up.")
+    jump: dict[Difficulty, JumpDefaults] = Field(
+        description="Default NJS and reaction time per difficulty, config overrides included."
+    )
+    install: InstallTarget
 
 
 class ErrorResponse(BaseModel):

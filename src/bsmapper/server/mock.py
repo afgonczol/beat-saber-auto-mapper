@@ -84,6 +84,9 @@ class MockJobRunner:
         self.block = block
         self.block_lightshow = block.lightshow or self.template.lightshow
 
+    def describe(self) -> tuple[str, str]:
+        return "mock", "canned maps for UI development"
+
     # --- JobRunner -------------------------------------------------------------------
 
     def run(self, job: JobInput, progress: ProgressFn) -> JobResult:
@@ -94,8 +97,8 @@ class MockJobRunner:
         self._sleep()
         beatmap = dataclasses.replace(
             self.template,
-            song_name=tags.title or job.audio_path.stem,
-            song_author=tags.artist,
+            song_name=opts.title or tags.title or job.audio_path.stem,
+            song_author=opts.artist if opts.artist is not None else tags.artist,
             mapper="bsmapper (mock)",
             preview_start=min(12.0, duration / 3),
             difficulties=[],

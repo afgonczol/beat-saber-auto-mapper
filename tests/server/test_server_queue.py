@@ -219,6 +219,21 @@ def test_install_when_done(manager: JobManager, runner: GatedRunner, installs: l
     assert installs == ["auto"]
 
 
+def test_installing_a_version_uninstalls_the_others(
+    manager: JobManager, runner: GatedRunner, installs: list[str]
+) -> None:
+    runner.gated = False
+    first, second = submit(manager, "same"), submit(manager, "same")
+    other = submit(manager, "other")
+    wait_for(lambda: all(status(j) == JobStatus.DONE for j in (first, second, other)))
+    for job in (first, other, second):
+        manager.install(job)
+    # Both versions of "same" install to CustomLevels/same: only the latest is there now.
+    assert first.info.installed is None
+    assert second.info.installed == InstallResult(path="CustomLevels/same")
+    assert other.info.installed == InstallResult(path="CustomLevels/other")
+
+
 def test_cancelled_regenerate_keeps_the_map(manager: JobManager, runner: GatedRunner) -> None:
     first = submit(manager, "first")
     runner.release("first")

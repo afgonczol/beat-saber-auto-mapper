@@ -17,7 +17,7 @@ from bsmapper.formats.packaging import (
 )
 from bsmapper.formats.reader import MapFolderReader, read_map, read_map_report
 from bsmapper.formats.report import MapFormatError, ReadReport
-from bsmapper.formats.writer import MapFolderWriter, write_map
+from bsmapper.formats.writer import MapFolderWriter, set_song_info, write_map
 
 __all__ = [
     "MapFolderReader",
@@ -32,6 +32,7 @@ __all__ = [
     "read_map",
     "read_map_report",
     "read_tags",
+    "set_song_info",
     "write_map",
     "write_placeholder_cover",
     "zip_map",

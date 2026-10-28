@@ -5,7 +5,10 @@ import {
   TERMINAL,
   cancelJob,
   downloadUrl,
+  installJob,
+  jobName,
   removeJob,
+  rerunJob,
   type JobInfo,
 } from "../api/client";
 import { ProgressBar } from "./ProgressView";
@@ -26,6 +29,29 @@ const STAGE_LABEL: Record<string, string> = {
   package: "Packaging",
 };
 
+const MAX_RUN_S = 30 * 60; // longer runs were interrupted or waited on something; skip them
+
+/** Seconds a whole song takes here: the median of the finished runs, null before the first. */
+export function typicalRunSeconds(jobs: JobInfo[]): number | null {
+  const runs = jobs
+    .filter((j) => j.status === "done" && j.revision === 1 && j.started_at && j.finished_at)
+    .map((j) => (Date.parse(j.finished_at!) - Date.parse(j.started_at!)) / 1000)
+    .filter((s) => s > 0 && s < MAX_RUN_S)
+    .sort((a, b) => a - b);
+  return runs.length ? runs[Math.floor(runs.length / 2)] : null;
+}
+
+/** Rough time until the queue is empty, e.g. "about 4 min left". */
+export function queueEta(jobs: JobInfo[]): string | null {
+  const run = typicalRunSeconds(jobs);
+  if (run == null) return null;
+  const running = jobs.find((j) => j.status === "running");
+  const waiting = jobs.filter((j) => j.status === "queued").length;
+  const left = waiting * run + (running ? run * (1 - (running.progress ?? 0)) : 0);
+  if (left <= 0) return null;
+  return left < 60 ? "under a minute left" : `about ${Math.round(left / 60)} min left`;
+}
+
 function optionsSummary(job: JobInfo): string {
   const o = job.options;
   const modes = (o.modes ?? []).map((m) => MODE_LABEL[m] ?? m).join(", ");
@@ -38,10 +64,12 @@ interface Props {
   error: string | null;
   refresh: () => void;
   open: (id: string) => void;
+  /** Make a song again with other options. */
+  remake: (id: string) => void;
 }
 
 /** Every song on the server: queued, running, finished. Lasts until the server restarts. */
-export function QueuePanel({ jobs, error, refresh, open }: Props) {
+export function QueuePanel({ jobs, error, refresh, open, remake }: Props) {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -62,7 +90,12 @@ export function QueuePanel({ jobs, error, refresh, open }: Props) {
   const finished = jobs.filter((j) => TERMINAL.includes(j.status));
   const running = jobs.filter((j) => j.status === "running");
   const done = jobs.filter((j) => j.status === "done").length;
-  const failed = jobs.filter((j) => j.status === "failed").length;
+  const failedJobs = jobs.filter((j) => j.status === "failed");
+  const failed = failedJobs.length;
+  const notInstalled = jobs.filter((j) => j.status === "done" && !j.installed);
+  const eta = queueEta(jobs);
+  // A retry queues the song again with the same options and drops the failed entry.
+  const retry = (id: string) => rerunJob(id).then(() => removeJob(id));
 
   return (
     <section className="card queue" aria-label="Song queue">
@@ -74,9 +107,28 @@ export function QueuePanel({ jobs, error, refresh, open }: Props) {
             {queued.length > 0 && ` · ${queued.length} waiting`}
             {done > 0 && ` · ${done} done`}
             {failed > 0 && ` · ${failed} failed`}
+            {eta && ` · ${eta}`}
           </div>
         </div>
         <div className="queue-bulk">
+          {failed > 0 && (
+            <button
+              className="ghost small"
+              onClick={() => act(failedJobs.map((j) => j.id), retry)}
+              title="Queue every failed song again with the same options"
+            >
+              Retry failed
+            </button>
+          )}
+          {notInstalled.length > 1 && (
+            <button
+              className="ghost small"
+              onClick={() => act(notInstalled.map((j) => j.id), installJob)}
+              title="Copy every finished map that is not in the game yet into CustomLevels"
+            >
+              Install all ({notInstalled.length})
+            </button>
+          )}
           {queued.length > 1 && (
             <button
               className="ghost small"
@@ -107,6 +159,9 @@ export function QueuePanel({ jobs, error, refresh, open }: Props) {
             open={open}
             cancel={() => act([job.id], cancelJob)}
             remove={() => act([job.id], removeJob)}
+            retry={() => act([job.id], retry)}
+            install={() => act([job.id], installJob)}
+            remake={() => remake(job.id)}
           />
         ))}
       </ol>
@@ -120,12 +175,18 @@ function QueueRow({
   open,
   cancel,
   remove,
+  retry,
+  install,
+  remake,
 }: {
   job: JobInfo;
   busy: boolean;
   open: (id: string) => void;
   cancel: () => void;
   remove: () => void;
+  retry: () => void;
+  install: () => void;
+  remake: () => void;
 }) {
   const status = job.status;
   const pct = Math.round((job.progress ?? 0) * 100);
@@ -147,10 +208,15 @@ function QueueRow({
               e.preventDefault();
               open(job.id);
             }}
-            title={status === "done" ? "Open the preview" : "Open its progress page"}
+            title={`${job.filename} · ${status === "done" ? "open the preview" : "open its progress page"}`}
           >
-            {job.filename}
+            {jobName(job)}
           </a>
+          {job.feedback?.rating ? (
+            <span title={job.feedback.note || "Playtest rating"} aria-label={job.feedback.rating > 0 ? "Rated good" : "Rated needs work"}>
+              {job.feedback.rating > 0 ? "👍" : "👎"}
+            </span>
+          ) : null}
         </div>
         <div className="queue-detail muted">{detail}</div>
         {status === "running" && <ProgressBar info={job} />}
@@ -173,6 +239,24 @@ function QueueRow({
             <a className="button small" href={downloadUrl(job.id)} download>
               .zip
             </a>
+            {!job.installed && (
+              <button className="button small" disabled={busy} onClick={install} title="Copy the map into CustomLevels">
+                Install
+              </button>
+            )}
+            <button className="ghost small" onClick={remake} title="Make this song again with other options or a new seed">
+              Again…
+            </button>
+          </>
+        )}
+        {(status === "failed" || status === "cancelled") && (
+          <>
+            <button className="button small" disabled={busy} onClick={retry} title="Queue it again with the same options">
+              Retry
+            </button>
+            <button className="ghost small" onClick={remake} title="Queue it again with other options">
+              Edit…
+            </button>
           </>
         )}
         {status === "running" && (

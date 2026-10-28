@@ -77,6 +77,22 @@ def test_generate_and_install(fake_pipeline, tmp_path: Path) -> None:
     assert fake_pipeline["setup"] == ("auto", "auto", None)
 
 
+def test_title_and_artist(fake_pipeline, tmp_path: Path) -> None:
+    song = tmp_path / "track01 (Official Video).mp3"
+    song.write_bytes(b"x")
+    out = tmp_path / "out"
+    args = ["generate", str(song), "--out", str(out), "--difficulties", "Expert"]
+    result = runner.invoke(cli.app, [*args, "--title", "Real", "--artist", "Band"])
+    assert result.exit_code == 0, result.output
+    beatmap = fake_pipeline["beatmap"]
+    assert (beatmap.song_name, beatmap.song_author) == ("Real", "Band")
+    assert (out / "Real - Band.zip").is_file()
+    other = tmp_path / "other.mp3"
+    other.write_bytes(b"x")
+    result = runner.invoke(cli.app, ["generate", str(song), str(other), "--title", "Real"])
+    assert result.exit_code != 0 and "single song" in result.output
+
+
 def test_jump_options(fake_pipeline, tmp_path: Path) -> None:
     from bsmapper.generation import JUMP_TABLE
 
@@ -162,10 +178,10 @@ def test_generate_batch_folder(fake_pipeline, monkeypatch, tmp_path: Path) -> No
     )
     analyze = generation.Pipeline.analyze
 
-    def flaky_analyze(self, audio):
+    def flaky_analyze(self, audio, *args):
         if Path(audio).stem.startswith("Broken"):
             raise ValueError("not a song")
-        return analyze(self, audio)
+        return analyze(self, audio, *args)
 
     monkeypatch.setattr(generation.Pipeline, "analyze", flaky_analyze)
     songs = tmp_path / "songs"

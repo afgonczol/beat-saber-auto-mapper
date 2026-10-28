@@ -96,6 +96,21 @@ def write_map(
     return out_dir
 
 
+def set_song_info(map_dir: Path | str, title: str, artist: str) -> None:
+    """Change the song title and artist in a map folder's Info.dat (v2 or v4), in place.
+
+    Only those two fields change; the difficulty files are not rewritten.
+    """
+    path = Path(map_dir) / INFO_FILENAME
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if info_mod.is_v4(data):
+        song = data.setdefault("song", {})
+        song["title"], song["author"] = title, artist
+    else:
+        data["_songName"], data["_songAuthorName"] = title, artist
+    dump_json(data, path)
+
+
 class MapFolderWriter:
     """``interfaces.MapWriter``: v3 by default, v2 and v4 on request."""
 
