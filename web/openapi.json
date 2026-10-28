@@ -763,6 +763,69 @@
         }
       }
     },
+    "/api/jobs/{job_id}/feedback": {
+      "put": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Feedback",
+        "description": "Save a playtest rating and notes for the map (``rating`` 0 and no note clears it).\n\nThey are kept in the job's ``job.json``, so they outlive the browser and the server.",
+        "operationId": "job_feedback_api_jobs__job_id__feedback_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Feedback"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/{job_id}/install": {
       "post": {
         "tags": [
@@ -1641,6 +1704,44 @@
         "title": "EventBoxGroup",
         "description": "v3 group lighting. ``boxes`` stays loosely typed until the lighting\nworkstream refines it; renderers own the per-environment group ids."
       },
+      "Feedback": {
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "enum": [
+              -1,
+              0,
+              1
+            ],
+            "title": "Rating",
+            "description": "1 = good, -1 = needs work, 0 = none.",
+            "default": 0
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Note",
+            "description": "What they noticed.",
+            "default": ""
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "Set by the server."
+          }
+        },
+        "type": "object",
+        "title": "Feedback",
+        "description": "What the player thought of the map after playing it (docs/PLAYTEST.md)."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1894,6 +1995,17 @@
             ],
             "title": "Source Id",
             "description": "The job this one was remade from (POST .../rerun)."
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Feedback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Playtest rating and notes."
           }
         },
         "type": "object",

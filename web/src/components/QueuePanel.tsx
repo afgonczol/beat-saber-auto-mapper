@@ -212,6 +212,11 @@ function QueueRow({
           >
             {jobName(job)}
           </a>
+          {job.feedback?.rating ? (
+            <span title={job.feedback.note || "Playtest rating"} aria-label={job.feedback.rating > 0 ? "Rated good" : "Rated needs work"}>
+              {job.feedback.rating > 0 ? "👍" : "👎"}
+            </span>
+          ) : null}
         </div>
         <div className="queue-detail muted">{detail}</div>
         {status === "running" && <ProgressBar info={job} />}

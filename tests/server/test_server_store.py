@@ -258,3 +258,44 @@ def test_title_option_and_remake_keeps_a_fixed_name(tmp_path: Path) -> None:
         again = client.post(f"/api/jobs/{job['id']}/rerun", json={"options": options}).json()
         done = wait_status(client, again["id"], "done")
         assert (done["title"], done["artist"]) == ("Fixed", "Band")
+
+
+def test_playtest_feedback_is_saved(tmp_path: Path) -> None:
+    with make_client(tmp_path / "work") as client:
+        job = upload(client)
+        wait_status(client, job["id"], "done")
+        body = {"rating": -1, "note": "  Expert too easy around 1:40 "}
+        r = client.put(f"/api/jobs/{job['id']}/feedback", json=body)
+        assert r.status_code == 200, r.text
+        feedback = r.json()["feedback"]
+        assert feedback["rating"] == -1 and feedback["note"] == "Expert too easy around 1:40"
+        assert feedback["updated_at"]
+        bad = client.put(f"/api/jobs/{job['id']}/feedback", json={"rating": 5})
+        assert bad.status_code == 422
+        assert client.put("/api/jobs/nope/feedback", json={}).status_code == 404
+    with make_client(tmp_path / "work") as client:
+        assert client.get(f"/api/jobs/{job['id']}").json()["feedback"]["rating"] == -1
+        r = client.put(f"/api/jobs/{job['id']}/feedback", json={"rating": 0, "note": " "})
+        assert r.json()["feedback"] is None
+
+
+def test_feedback_command_lists_notes(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from bsmapper import cli
+
+    work = tmp_path / "work"
+    with make_client(work) as client:
+        rated = upload(client, seed="5")
+        plain = upload(client)
+        wait_status(client, rated["id"], "done")
+        wait_status(client, plain["id"], "done")
+        note = {"rating": 1, "note": "Flows well\nlights calm"}
+        client.put(f"/api/jobs/{rated['id']}/feedback", json=note)
+    result = CliRunner().invoke(cli.app, ["feedback", "--work-dir", str(work)])
+    assert result.exit_code == 0, result.output
+    assert "good" in result.output and "Song - Artist" in result.output
+    assert "seed 5" in result.output and "> lights calm" in result.output
+    assert result.output.count("[job ") == 1
+    empty = CliRunner().invoke(cli.app, ["feedback", "--work-dir", str(tmp_path / "none")])
+    assert "No playtest notes" in empty.output

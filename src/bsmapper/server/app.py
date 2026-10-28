@@ -34,6 +34,7 @@ from bsmapper.server.jobs import TERMINAL, Job, JobBusyError, JobManager, JobNot
 from bsmapper.server.models import (
     EnvironmentInfo,
     ErrorResponse,
+    Feedback,
     InstallResult,
     JobEvent,
     JobInfo,
@@ -463,6 +464,16 @@ def _api(manager: JobManager) -> APIRouter:
             manager.set_song_info(job, request.title, request.artist)
         except (JobBusyError, MapNotReady) as exc:
             raise HTTPException(409, str(exc)) from exc
+        return snapshot(job)
+
+    @router.put("/jobs/{job_id}/feedback", responses=NOT_FOUND)
+    def job_feedback(job_id: str, request: Feedback) -> JobInfo:
+        """Save a playtest rating and notes for the map (``rating`` 0 and no note clears it).
+
+        They are kept in the job's ``job.json``, so they outlive the browser and the server.
+        """
+        job = get_job(job_id)
+        manager.set_feedback(job, request)
         return snapshot(job)
 
     @router.post(

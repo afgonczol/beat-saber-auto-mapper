@@ -862,3 +862,46 @@ def serve(
     application = create_app(runner, work_dir, Path(web_dist) if web_dist else None)
     typer.echo(f"bsmapper UI on http://{host}:{port}/  (API docs at /docs)")
     uvicorn.run(application, host=host, port=port, log_level="debug" if verbose else "info")
+
+
+@app.command()
+def feedback(
+    work_dir: Path = Path("out/server"),
+) -> None:
+    """List the playtest ratings and notes saved in the web UI, newest first.
+
+    Each line shows the song, the verdict and the options that made the map, so a note like
+    "Expert felt too easy" can be traced back to its intensity, style and seed.
+    """
+    try:
+        from bsmapper.server import store
+    except ImportError as e:
+        raise typer.Exit(f"This needs the server extra: pip install -e .[server] ({e})") from e
+
+    _setup_logging(False)
+    jobs = []
+    if work_dir.is_dir():
+        for job_dir in work_dir.iterdir():
+            loaded = store.load(job_dir) if job_dir.is_dir() else None
+            if loaded is not None and loaded[0].feedback is not None:
+                jobs.append(loaded[0])
+    if not jobs:
+        typer.echo(f"No playtest notes in {work_dir}. Add them on a map's page in the web UI.")
+        return
+    jobs.sort(key=lambda info: info.feedback.updated_at or info.created_at, reverse=True)
+    verdicts = {1: "good", -1: "needs work", 0: "note"}
+    for info in jobs:
+        fb, o = info.feedback, info.options
+        when = (fb.updated_at or info.created_at).astimezone().strftime("%Y-%m-%d %H:%M")
+        name = f"{info.title} - {info.artist}" if info.artist else info.title or info.filename
+        diffs = ",".join(d.value for d in o.difficulties)
+        num = lambda v, unset: unset if v is None else f"{v:.2f}"  # noqa: E731
+        settings = (
+            f"{diffs}; intensity {num(o.intensity, 'default')}, style {num(o.style, 'none')}, "
+            f"seed {o.seed}, lights {o.lighting}"
+        )
+        typer.secho(f"{when}  {verdicts[fb.rating]:<10}  {name}", bold=True)
+        typer.echo(f"    {settings}  [job {info.id}]")
+        for line in fb.note.splitlines() or [""]:
+            if line:
+                typer.echo(f"    > {line}")

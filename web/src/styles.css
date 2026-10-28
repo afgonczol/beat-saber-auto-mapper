@@ -268,3 +268,9 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; backgro
 .song-name { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(100%, 460px); margin-top: 8px; cursor: default; text-align: left; }
 .song-name label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
 .song-name input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; min-width: 0; }
+.playtest { display: grid; gap: 10px; }
+.playtest textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 0.9rem; }
+.button-row.left { justify-content: flex-start; }
+.button.good { border-color: var(--ok); background: rgba(61, 220, 151, 0.15); }
+.button.bad { border-color: var(--warn); background: rgba(255, 176, 32, 0.15); }
+.small-text { font-size: 0.78rem; font-weight: 400; }

@@ -23,6 +23,7 @@ from typing import BinaryIO
 from bsmapper.server import store
 from bsmapper.server.install import MapNotReady, install_job, uninstall_path
 from bsmapper.server.models import (
+    Feedback,
     InstallResult,
     JobEvent,
     JobInfo,
@@ -222,6 +223,19 @@ class JobManager:
         with source.open("rb") as f:
             new = self.submit(filename, f, options, install_when_done, source_id=job.info.id)
         return new
+
+    def set_feedback(self, job: Job, feedback: Feedback) -> None:
+        """Keep the player's rating and notes with the job (saved with it)."""
+        with job.lock:
+            empty = feedback.rating == 0 and not feedback.note.strip()
+            job.info.feedback = (
+                None
+                if empty
+                else feedback.model_copy(
+                    update={"note": feedback.note.strip(), "updated_at": datetime.now(UTC)}
+                )
+            )
+            self._save(job)
 
     def set_song_info(self, job: Job, title: str, artist: str) -> None:
         """Rename the song in the finished map (Info.dat and zip); reinstall it if installed."""

@@ -207,6 +207,14 @@ intensity = 0.8
 repetition, reaction time and lights. Notes like "Expert felt one step too easy" or "the
 lights jitter around 1:40" turn directly into fixes.
 
+After playing a map made in the web UI, open its page and use the **Playtest** box:
+**👍 Good** or **👎 Needs work**, plus a note. It saves on its own and stays with the map
+(the queue shows the thumb). To read every note later, with the options that made each map:
+
+```powershell
+bsmapper feedback
+```
+
 ## Known limitations
 
 - **Lighting:** being redesigned. The current model lights can change too often in busy

@@ -7,6 +7,7 @@ import {
   audioUrl,
   downloadUrl,
   installJob,
+  setFeedback,
   setSongInfo,
   type Characteristic,
   type Difficulty,
@@ -298,6 +299,8 @@ export function Preview({ info, map, regenerate, reload, remake }: Props) {
           </button>
         </div>
 
+        <PlaytestCard key={info.id} info={info} />
+
         <SettingsUsed info={info} />
       </aside>
     </div>
@@ -455,6 +458,60 @@ function SongCard({
           <dd>{stats ? `${stats.reaction.toFixed(2)} s` : ""}</dd>
         </div>
       </dl>
+    </div>
+  );
+}
+
+/** The player's verdict after playing the map, kept with the job (docs/PLAYTEST.md). */
+function PlaytestCard({ info }: { info: JobInfo }) {
+  const [rating, setRating] = useState<-1 | 0 | 1>((info.feedback?.rating ?? 0) as -1 | 0 | 1);
+  const [note, setNote] = useState(info.feedback?.note ?? "");
+  const [saved, setSaved] = useState<string | null>(info.feedback?.note || info.feedback?.rating ? "Saved" : null);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = (r: -1 | 0 | 1, n: string) => {
+    setError(null);
+    setSaved("Saving…");
+    setFeedback(info.id, r, n).then(
+      () => setSaved("Saved"),
+      (e) => {
+        setSaved(null);
+        setError((e as Error).message);
+      },
+    );
+  };
+  const rate = (r: -1 | 1) => {
+    const next = rating === r ? 0 : r;
+    setRating(next);
+    save(next, note);
+  };
+
+  return (
+    <div className="card playtest">
+      <h3>
+        Playtest
+        {saved && <span className="muted small-text">{saved}</span>}
+      </h3>
+      <div className="button-row left">
+        <button className={`button small ${rating === 1 ? "good" : ""}`} onClick={() => rate(1)} aria-pressed={rating === 1}>
+          👍 Good
+        </button>
+        <button className={`button small ${rating === -1 ? "bad" : ""}`} onClick={() => rate(-1)} aria-pressed={rating === -1}>
+          👎 Needs work
+        </button>
+      </div>
+      <textarea
+        rows={3}
+        value={note}
+        placeholder="What did you notice? e.g. “Expert felt too easy”, “lights jitter at 1:40”"
+        maxLength={4000}
+        onChange={(e) => {
+          setNote(e.target.value);
+          setSaved(null);
+        }}
+        onBlur={() => note !== (info.feedback?.note ?? "") && save(rating, note)}
+      />
+      {error && <div className="error">{error}</div>}
     </div>
   );
 }

@@ -114,6 +114,14 @@ class InstallResult(BaseModel):
     )
 
 
+class Feedback(BaseModel):
+    """What the player thought of the map after playing it (docs/PLAYTEST.md)."""
+
+    rating: Literal[-1, 0, 1] = Field(default=0, description="1 = good, -1 = needs work, 0 = none.")
+    note: str = Field(default="", max_length=4000, description="What they noticed.")
+    updated_at: datetime | None = Field(default=None, description="Set by the server.")
+
+
 class JobInfo(BaseModel):
     id: str
     status: JobStatus
@@ -147,6 +155,7 @@ class JobInfo(BaseModel):
     source_id: str | None = Field(
         default=None, description="The job this one was remade from (POST .../rerun)."
     )
+    feedback: Feedback | None = Field(default=None, description="Playtest rating and notes.")
 
 
 class JobEvent(BaseModel):

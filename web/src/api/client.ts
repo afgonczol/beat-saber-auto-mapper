@@ -13,6 +13,7 @@ export type InstallResult = S["InstallResult"];
 export type EnvironmentInfo = S["EnvironmentInfo"];
 export type ServerSettings = S["ServerSettings"];
 export type RerunRequest = S["RerunRequest"];
+export type Feedback = S["Feedback"];
 export type Beatmap = S["Beatmap"];
 export type DifficultyMap = S["DifficultyMap"];
 export type Lightshow = S["Lightshow"];
@@ -106,6 +107,17 @@ export async function setSongInfo(id: string, title: string, artist: string): Pr
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, artist }),
+    }),
+  );
+}
+
+/** Save a playtest rating (1 good, -1 needs work, 0 none) and notes for the map. */
+export async function setFeedback(id: string, rating: -1 | 0 | 1, note: string): Promise<JobInfo> {
+  return json(
+    await fetch(`${BASE}/jobs/${id}/feedback`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rating, note }),
     }),
   );
 }
