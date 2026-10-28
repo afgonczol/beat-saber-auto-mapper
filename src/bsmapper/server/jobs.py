@@ -2,8 +2,8 @@
 
 Jobs run in the order they were queued; the queue has no size limit, so a batch of songs can
 be queued at once. Queued jobs can be cancelled or removed; a running job is cancelled at its
-next progress report. Jobs live as long as the server process (a page reload finds them
-again with ``GET /api/jobs``).
+next progress report. Every job is saved in its folder (``store``), so after a server restart
+``restore`` finds the finished maps again and queues the songs a restart interrupted.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
-from bsmapper.server.install import MapNotReady, install_job
+from bsmapper.server import store
+from bsmapper.server.install import MapNotReady, install_job, uninstall_path
 from bsmapper.server.models import (
     InstallResult,
     JobEvent,
@@ -31,6 +32,7 @@ from bsmapper.server.models import (
     RegenerateRequest,
 )
 from bsmapper.server.runner import JobInput, JobResult, JobRunner
+from bsmapper.server.songinfo import retitle
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ AUDIO_SUFFIXES = (".mp3", ".ogg", ".egg", ".wav", ".flac", ".m4a", ".aac", ".opu
 TERMINAL = (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
 
 Installer = Callable[[JobInput, JobResult], InstallResult]
+Uninstaller = Callable[[str], None]
 
 
 class JobBusyError(RuntimeError):
@@ -97,11 +100,16 @@ class _Run:
 
 class JobManager:
     def __init__(
-        self, runner: JobRunner, work_dir: Path, installer: Installer = install_job
+        self,
+        runner: JobRunner,
+        work_dir: Path,
+        installer: Installer = install_job,
+        uninstaller: Uninstaller = uninstall_path,
     ) -> None:
         self.runner = runner
         self.work_dir = Path(work_dir)
         self.installer = installer
+        self.uninstaller = uninstaller
         self.jobs: dict[str, Job] = {}  # in the order they were submitted
         self._jobs_lock = threading.Lock()
         self._queue: queue.Queue[_Run | None] = queue.Queue()
@@ -123,6 +131,44 @@ class JobManager:
             self._worker.join(timeout=5)
         self._worker = None
 
+    def restore(self) -> int:
+        """Load the jobs saved in ``work_dir``, oldest first; returns how many.
+
+        Finished jobs come back as they were. A job a restart interrupted is queued again,
+        unless it already had a map (an interrupted regenerate): then it keeps that map.
+        """
+        if not self.work_dir.is_dir():
+            return 0
+        saved = []
+        for job_dir in self.work_dir.iterdir():
+            if job_dir.is_dir() and job_dir.name not in self.jobs:
+                loaded = store.load(job_dir)
+                if loaded is not None:
+                    saved.append((job_dir, *loaded))
+        saved.sort(key=lambda item: item[1].created_at)
+        for job_dir, info, audio, result in saved:
+            if info.id in self.jobs:
+                continue
+            job = Job(info, JobInput(info.id, audio, job_dir, info.options), result)
+            with self._jobs_lock:
+                self.jobs[info.id] = job
+            with job.lock:
+                interrupted = info.status not in TERMINAL
+                if info.status == JobStatus.DONE and result is None:
+                    info.error = "The map files are missing."
+                    self._emit(job, "status", status=JobStatus.FAILED, message=info.error)
+                elif interrupted and result is not None:
+                    info.started_at = None
+                    message = "Interrupted by a server restart; the earlier map is kept"
+                    self._emit(job, "status", status=JobStatus.DONE, progress=1.0, message=message)
+                elif interrupted and not audio.is_file():
+                    info.error = "The uploaded song is missing."
+                    self._emit(job, "status", status=JobStatus.FAILED, message=info.error)
+                elif interrupted:
+                    info.started_at = None
+                    self._queue_first_run(job, "Queued again after a server restart")
+        return len(saved)
+
     # --- API -------------------------------------------------------------------------
 
     def submit(
@@ -131,6 +177,7 @@ class JobManager:
         data: BinaryIO,
         options: JobOptions,
         install_when_done: bool = False,
+        source_id: str | None = None,
     ) -> Job:
         suffix = Path(filename).suffix.lower()
         if suffix not in AUDIO_SUFFIXES:
@@ -152,15 +199,54 @@ class JobManager:
             filename=Path(filename).name,
             options=options,
             install_when_done=install_when_done,
+            source_id=source_id,
         )
         job = Job(info, JobInput(job_id, audio, job_dir, options))
-        run_id = self._claim_run(job)
-        self._emit(job, "status", status=JobStatus.QUEUED, message="Queued")
         with self._jobs_lock:
             self.jobs[job_id] = job
-        run = lambda: self.runner.run(job.input, self._progress_fn(job))  # noqa: E731
-        self._put(job, run, run_id, first=True)
+        self._queue_first_run(job, "Queued")
         return job
+
+    def rerun(
+        self, job: Job, options: JobOptions | None = None, install_when_done: bool = False
+    ) -> Job:
+        """Queue the same song again as a new job (same options unless given)."""
+        with job.lock:
+            source, filename = job.input.audio_path, job.info.filename
+            options = options or job.info.options.model_copy(deep=True)
+        if not source.is_file():
+            raise FileNotFoundError("the uploaded song is gone")
+        with source.open("rb") as f:
+            new = self.submit(filename, f, options, install_when_done, source_id=job.info.id)
+        return new
+
+    def set_song_info(self, job: Job, title: str, artist: str) -> None:
+        """Rename the song in the finished map (Info.dat and zip); reinstall it if installed."""
+        with job.lock:
+            if job.info.status not in TERMINAL:
+                raise JobBusyError("job is busy")
+            if job.result is None:
+                raise MapNotReady("map not ready")
+            title, artist = title.strip(), artist.strip()
+            result = retitle(job.input, job.result, title, artist)
+            job.result = result
+            job.info.title, job.info.artist = title, artist
+            job.info.revision += 1
+            previous = job.info.installed
+            job.info.installed = None
+            store.save_result(job.input.work_dir, result)
+            self._save(job)
+        if previous is None:
+            return
+        try:
+            installed = self._install(job, result)
+            if installed.path != previous.path:
+                self.uninstaller(previous.path)
+        except Exception as exc:  # the renamed map is fine; say why the game has the old one
+            log.warning("job %s: reinstall failed: %s", job.info.id, exc)
+            with job.lock:
+                job.info.install_error = str(exc) or type(exc).__name__
+                self._save(job)
 
     def regenerate(self, job: Job, request: RegenerateRequest) -> None:
         with job.lock:
@@ -222,6 +308,20 @@ class JobManager:
 
     # --- internals --------------------------------------------------------------------
 
+    def _queue_first_run(self, job: Job, message: str) -> None:
+        with job.lock:
+            run_id = self._claim_run(job)
+            self._emit(job, "status", status=JobStatus.QUEUED, message=message)
+        run = lambda: self.runner.run(job.input, self._progress_fn(job))  # noqa: E731
+        self._put(job, run, run_id, first=True)
+
+    def _save(self, job: Job) -> None:
+        """Write the job's info to its folder (with ``job.lock`` held)."""
+        try:
+            store.save_info(job.input.work_dir, job.info, job.input.audio_path)
+        except OSError as exc:  # e.g. removed meanwhile; the job still works in memory
+            log.warning("job %s: could not save: %s", job.info.id, exc)
+
     def _claim_run(self, job: Job) -> int:
         """Make a new run the job's active one (with ``job.lock`` held once others see it)."""
         job.runs += 1
@@ -258,10 +358,16 @@ class JobManager:
                 job.info.error = str(exc) or type(exc).__name__
             self._emit(job, "status", status=JobStatus.FAILED, message=job.info.error or "")
             return
+        try:
+            store.save_result(job.input.work_dir, result)
+        except OSError as exc:
+            log.warning("job %s: could not save the map: %s", job.info.id, exc)
         with job.lock:
             job.result = result
             job.info.revision += 1
             job.info.error = None
+            job.info.title = result.beatmap.song_name
+            job.info.artist = result.beatmap.song_author
             job.info.installed = job.info.install_error = None  # the game has the old map
             job.active_run = None
             auto_install = item.first and job.info.install_when_done
@@ -283,6 +389,7 @@ class JobManager:
         with job.lock:
             job.info.installed = installed
             job.info.install_error = None
+            self._save(job)
         return installed
 
     def _emit_cancelled(self, job: Job) -> None:
@@ -327,6 +434,10 @@ class JobManager:
             if progress is not None:
                 info.progress = progress
             info.message = message
+            if type_ == "status" and status == JobStatus.RUNNING:
+                info.started_at, info.finished_at = datetime.now(UTC), None
+            elif type_ == "status" and status in TERMINAL:
+                info.finished_at = datetime.now(UTC)
             seq = info.last_seq = info.last_seq + 1
             job.events.append(
                 JobEvent(
@@ -338,3 +449,5 @@ class JobManager:
                     message=message,
                 )
             )
+            if type_ == "status":
+                self._save(job)

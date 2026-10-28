@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from bsmapper.formats import write_map
-from bsmapper.generation import GameConfig, install_map, load_config
+from bsmapper.generation import GameConfig, install_map, load_config, uninstall_map
 from bsmapper.generation.install import DEFAULT_BEAT_SABER_DIR
 from bsmapper.schema import Beatmap
 
@@ -67,3 +67,16 @@ def test_install_needs_the_levels_folder(tmp_path: Path) -> None:
     src = make_map(tmp_path / "m", "bsmapper")
     with pytest.raises(FileNotFoundError, match="CustomLevels"):
         install_map(src, GameConfig(custom_levels=tmp_path / "missing"))
+
+
+def test_uninstall_only_removes_our_maps_in_custom_levels(tmp_path: Path) -> None:
+    levels = tmp_path / "CustomLevels"
+    levels.mkdir()
+    game = GameConfig(custom_levels=levels)
+    ours = install_map(make_map(tmp_path / "src" / "Ours", "bsmapper"), game)
+    theirs = make_map(levels / "Theirs", "someone")
+    outside = make_map(tmp_path / "Outside", "bsmapper")
+    assert not uninstall_map(theirs, game) and theirs.is_dir()
+    assert not uninstall_map(outside, game) and outside.is_dir()
+    assert not uninstall_map(levels / "Missing", game)
+    assert uninstall_map(ours, game) and not ours.exists()

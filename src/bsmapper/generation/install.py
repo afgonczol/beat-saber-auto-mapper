@@ -104,3 +104,20 @@ def install_map(map_dir: Path, config: GameConfig | None = None) -> Path:
         shutil.rmtree(dest)
     shutil.copytree(map_dir, dest)
     return dest
+
+
+def uninstall_map(installed: Path, config: GameConfig | None = None) -> bool:
+    """Delete an installed map folder if it is a bsmapper map directly inside CustomLevels.
+
+    Returns whether it was deleted. Maps someone else made are never touched.
+    """
+    config = config or load_config()
+    installed = Path(installed)
+    try:
+        inside = installed.resolve().parent == config.levels_dir.resolve()
+    except OSError:
+        return False
+    if not inside or not _is_ours(installed):
+        return False
+    shutil.rmtree(installed)
+    return True

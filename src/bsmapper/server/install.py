@@ -6,8 +6,9 @@ Used by ``POST /api/jobs/{id}/install`` and by jobs queued with "install when do
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
-from bsmapper.generation import install_map, load_config, safe_folder_name
+from bsmapper.generation import install_map, load_config, safe_folder_name, uninstall_map
 from bsmapper.generation.install import config_path
 from bsmapper.server.models import InstallResult
 from bsmapper.server.runner import JobInput, JobResult
@@ -53,3 +54,8 @@ def install_job(job: JobInput, result: JobResult) -> InstallResult:
     if chroma and not config.chroma_installed():
         warnings.append(CHROMA_MISSING.format(dll=config.chroma_dll.parent))
     return InstallResult(path=str(dest), warnings=warnings)
+
+
+def uninstall_path(path: str) -> None:
+    """Delete an earlier install of a job's map (only a bsmapper map inside CustomLevels)."""
+    uninstall_map(Path(path))

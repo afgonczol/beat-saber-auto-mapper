@@ -84,6 +84,9 @@ class MockJobRunner:
         self.block = block
         self.block_lightshow = block.lightshow or self.template.lightshow
 
+    def describe(self) -> tuple[str, str]:
+        return "mock", "canned maps for UI development"
+
     # --- JobRunner -------------------------------------------------------------------
 
     def run(self, job: JobInput, progress: ProgressFn) -> JobResult:

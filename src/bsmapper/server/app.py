@@ -41,8 +41,12 @@ from bsmapper.server.models import (
     LightStyle,
     MapPreview,
     RegenerateRequest,
+    RerunRequest,
+    ServerSettings,
+    SongInfo,
 )
 from bsmapper.server.runner import JobRunner
+from bsmapper.server.settings import server_settings
 
 REPO_WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 DEFAULT_WORK_DIR = Path("out") / "server"
@@ -71,6 +75,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        manager.restore()  # finished maps and interrupted songs from the last run
         manager.start()
         yield
         manager.stop()
@@ -148,6 +153,14 @@ def _api(manager: JobManager) -> APIRouter:
         from bsmapper.generation.runtime import find_light_effects
 
         return environment_options(find_light_effects())
+
+    @router.get("/settings", tags=["options"])
+    def get_settings() -> ServerSettings:
+        """Defaults for the options a job leaves out, where notes come from, and where maps
+        install (``~/.bsmapper/config.toml``)."""
+        describe = getattr(manager.runner, "describe", None)
+        generator, detail = describe() if describe else ("unknown", "")
+        return server_settings(generator, detail)
 
     @router.get("/jobs")
     def list_jobs() -> list[JobInfo]:
@@ -403,6 +416,42 @@ def _api(manager: JobManager) -> APIRouter:
         try:
             manager.regenerate(job, request)
         except JobBusyError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return snapshot(job)
+
+    @router.post(
+        "/jobs/{job_id}/rerun",
+        status_code=201,
+        responses={
+            **NOT_FOUND,
+            410: {"model": ErrorResponse, "description": "The uploaded song is gone."},
+        },
+    )
+    def job_rerun(job_id: str, request: RerunRequest) -> JobInfo:
+        """Queue the song again as a new job, from the upload the server already has.
+
+        Use it to retry a failed song, or to make the whole map again with other options or
+        a new seed. The source job stays as it is.
+        """
+        try:
+            job = manager.rerun(get_job(job_id), request.options, request.install)
+        except FileNotFoundError as exc:
+            raise HTTPException(410, str(exc)) from exc
+        return snapshot(job)
+
+    @router.put(
+        "/jobs/{job_id}/song",
+        responses={**NOT_FOUND, **NOT_READY},
+    )
+    def job_song_info(job_id: str, request: SongInfo) -> JobInfo:
+        """Change the song title and artist of a finished map (what the game lists).
+
+        The map is not generated again. If it was installed, the game copy is replaced.
+        """
+        job = get_job(job_id)
+        try:
+            manager.set_song_info(job, request.title, request.artist)
+        except (JobBusyError, MapNotReady) as exc:
             raise HTTPException(409, str(exc)) from exc
         return snapshot(job)
 
