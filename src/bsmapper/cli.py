@@ -140,6 +140,12 @@ def generate(
         help="Seconds from spawn to strike: one value for Expert and Expert+, or per "
         "difficulty (Hard=0.9,Expert+=0.75). Defaults: 1.2/1.0/0.88/0.8/0.7.",
     ),
+    title: str | None = typer.Option(
+        None, help="Song title in the map (one song only); default: from the file's tags."
+    ),
+    artist: str | None = typer.Option(
+        None, help="Song artist in the map (one song only); default: from the file's tags."
+    ),
     environment: str | None = typer.Option(
         None,
         help="Info.dat environment, e.g. LizzoEnvironment. Default for v3: one with a human "
@@ -208,6 +214,8 @@ def generate(
 
     _setup_logging(verbose)
     songs = _audio_files(audio)
+    if (title or artist) and len(songs) > 1:
+        raise typer.BadParameter("only for a single song", param_hint="--title/--artist")
     if lighting not in STYLES:
         raise typer.BadParameter(f"choose from {', '.join(STYLES)}", param_hint="--lighting")
     for value, choices, hint in (
@@ -284,7 +292,9 @@ def generate(
 
     def make_one(song: Path):
         """Generate, report and (if asked) install one song; returns the result and install."""
-        result = pipeline.run(song, out, opts, zip_output=zip_output, progress=progress)
+        result = pipeline.run(
+            song, out, opts, zip_output=zip_output, progress=progress, title=title, artist=artist
+        )
         _echo_result(result, pipeline, lighting)
         if not install:
             return result, None

@@ -241,6 +241,14 @@ def _api(manager: JobManager) -> APIRouter:
                 "omit to pick one for each song.",
             ),
         ] = None,
+        title: Annotated[
+            str | None,
+            Form(max_length=200, description="Song title; omit to read it from the file."),
+        ] = None,
+        artist: Annotated[
+            str | None,
+            Form(max_length=200, description="Song artist; omit to read it from the file."),
+        ] = None,
         install: Annotated[
             Literal["true", "false"],
             Form(description="Copy the map into the game as soon as it is generated."),
@@ -265,6 +273,8 @@ def _api(manager: JobManager) -> APIRouter:
             njs=njs,
             reaction_time=reaction_time,
             environment=environment,
+            title=(title.strip() or None) if title is not None else None,
+            artist=artist.strip() if artist is not None else None,
         )
         try:
             job = manager.submit(

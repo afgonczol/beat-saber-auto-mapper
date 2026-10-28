@@ -1242,6 +1242,32 @@
             "title": "Environment",
             "description": "Info.dat environment for v3 lighting (GET /api/environments); omit to pick one for each song."
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Song title; omit to read it from the file."
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist",
+            "description": "Song artist; omit to read it from the file."
+          },
           "install": {
             "type": "string",
             "enum": [
@@ -2048,6 +2074,32 @@
             ],
             "title": "Environment",
             "description": "Info.dat environment (its look and colours), e.g. LizzoEnvironment, from GET /api/environments; null = picked for each song."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Song title in the map; null = from the file's tags, else its name."
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist",
+            "description": "Song artist in the map; null = from the file's tags, else its name."
           }
         },
         "type": "object",

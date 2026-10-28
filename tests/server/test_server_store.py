@@ -155,7 +155,10 @@ def test_rerun_makes_a_new_job_from_the_upload(tmp_path: Path) -> None:
         assert same.status_code == 201, same.text
         same = same.json()
         assert same["id"] != source["id"] and same["source_id"] == source["id"]
-        assert same["filename"] == source["filename"] and same["options"] == source["options"]
+        assert same["filename"] == source["filename"]
+        # Same options, and the song keeps its name.
+        expected = {**source["options"], "title": "Song", "artist": "Artist"}
+        assert same["options"] == expected
 
         options = {**source["options"], "seed": 42, "difficulties": ["Hard", "Expert"]}
         other = client.post(
@@ -237,3 +240,21 @@ def test_settings_without_config_or_game(tmp_path: Path, monkeypatch) -> None:
     with make_client(tmp_path / "work") as client:
         s = client.get("/api/settings").json()
     assert s["install"]["error"] and s["intensity"] == 0.5
+
+
+def test_title_option_and_remake_keeps_a_fixed_name(tmp_path: Path) -> None:
+    with make_client(tmp_path / "work") as client:
+        named = upload(client, name="track01.mp3", title=" Real Name ", artist="Real Artist")
+        assert named["options"]["title"] == "Real Name"
+        done = wait_status(client, named["id"], "done")
+        assert (done["title"], done["artist"]) == ("Real Name", "Real Artist")
+
+        job = upload(client, name="Some Upload (Official Video).mp3")
+        wait_status(client, job["id"], "done")
+        client.put(f"/api/jobs/{job['id']}/song", json={"title": "Fixed", "artist": "Band"})
+        options = client.get(f"/api/jobs/{job['id']}").json()["options"]
+        assert (options["title"], options["artist"]) == ("Fixed", "Band")
+        options["title"] = options["artist"] = None  # a client that only knows older options
+        again = client.post(f"/api/jobs/{job['id']}/rerun", json={"options": options}).json()
+        done = wait_status(client, again["id"], "done")
+        assert (done["title"], done["artist"]) == ("Fixed", "Band")

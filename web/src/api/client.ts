@@ -11,6 +11,8 @@ export type DifficultyWarning = S["DifficultyWarning"];
 export type RegenerateRequest = S["RegenerateRequest"];
 export type InstallResult = S["InstallResult"];
 export type EnvironmentInfo = S["EnvironmentInfo"];
+export type ServerSettings = S["ServerSettings"];
+export type RerunRequest = S["RerunRequest"];
 export type Beatmap = S["Beatmap"];
 export type DifficultyMap = S["DifficultyMap"];
 export type Lightshow = S["Lightshow"];
@@ -76,8 +78,41 @@ export async function createJob(audio: File, options: JobOptions, install = fals
   if (options.njs != null) form.append("njs", String(options.njs));
   if (options.reaction_time != null) form.append("reaction_time", String(options.reaction_time));
   if (options.environment != null) form.append("environment", options.environment);
+  if (options.title) form.append("title", options.title);
+  if (options.artist) form.append("artist", options.artist);
   return json(await fetch(`${BASE}/jobs`, { method: "POST", body: form }));
 }
+
+/** Defaults for options a job leaves out, where notes come from, and where maps install. */
+export async function getSettings(): Promise<ServerSettings> {
+  return json(await fetch(`${BASE}/settings`));
+}
+
+/** Queue the song of an existing job again, as a new job (same options unless given). */
+export async function rerunJob(id: string, options: JobOptions | null = null, install = false): Promise<JobInfo> {
+  return json(
+    await fetch(`${BASE}/jobs/${id}/rerun`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ options, install } satisfies RerunRequest),
+    }),
+  );
+}
+
+/** Rename the song (title and artist the game shows); reinstalls it if it was installed. */
+export async function setSongInfo(id: string, title: string, artist: string): Promise<JobInfo> {
+  return json(
+    await fetch(`${BASE}/jobs/${id}/song`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, artist }),
+    }),
+  );
+}
+
+/** "Title - Artist" once the map exists, else the uploaded file's name. */
+export const jobName = (job: JobInfo) =>
+  job.title ? (job.artist ? `${job.title} - ${job.artist}` : job.title) : job.filename;
 
 export async function getJob(id: string): Promise<JobInfo> {
   return json(await fetch(`${BASE}/jobs/${id}`));

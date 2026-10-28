@@ -85,6 +85,16 @@ class JobOptions(BaseModel):
         description="Info.dat environment (its look and colours), e.g. LizzoEnvironment, from "
         "GET /api/environments; null = picked for each song.",
     )
+    title: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Song title in the map; null = from the file's tags, else its name.",
+    )
+    artist: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Song artist in the map; null = from the file's tags, else its name.",
+    )
 
 
 class EnvironmentInfo(BaseModel):

@@ -163,7 +163,7 @@ class PipelineJobRunner:
     def _song(self, job: JobInput, refresh: bool = False) -> Song:
         song = None if refresh else self._songs.get(job.job_id)
         if song is None:
-            song = self.pipeline.analyze(job.audio_path)
+            song = self.pipeline.analyze(job.audio_path, job.options.title, job.options.artist)
         self._songs[job.job_id] = song
         self._songs.move_to_end(job.job_id)
         while len(self._songs) > self.max_cached_songs:

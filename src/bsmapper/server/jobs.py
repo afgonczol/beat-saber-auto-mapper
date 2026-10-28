@@ -213,7 +213,10 @@ class JobManager:
         """Queue the same song again as a new job (same options unless given)."""
         with job.lock:
             source, filename = job.input.audio_path, job.info.filename
-            options = options or job.info.options.model_copy(deep=True)
+            options = (options or job.info.options).model_copy(deep=True)
+            # Keep the song's name, which may have been fixed by hand.
+            if options.title is None and job.info.title:
+                options.title, options.artist = job.info.title, job.info.artist
         if not source.is_file():
             raise FileNotFoundError("the uploaded song is gone")
         with source.open("rb") as f:
@@ -231,6 +234,7 @@ class JobManager:
             result = retitle(job.input, job.result, title, artist)
             job.result = result
             job.info.title, job.info.artist = title, artist
+            job.info.options.title, job.info.options.artist = title, artist
             job.info.revision += 1
             previous = job.info.installed
             job.info.installed = None
@@ -390,6 +394,14 @@ class JobManager:
             job.info.installed = installed
             job.info.install_error = None
             self._save(job)
+        # Another version of the song in the same folder is not in the game any more.
+        for other in self.all():
+            if other is job:
+                continue
+            with other.lock:
+                if other.info.installed and other.info.installed.path == installed.path:
+                    other.info.installed = None
+                    self._save(other)
         return installed
 
     def _emit_cancelled(self, job: Job) -> None:
