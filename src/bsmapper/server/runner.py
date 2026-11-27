@@ -40,6 +40,8 @@ class JobResult:
 
 
 class JobRunner(Protocol):
+    """Runners may also have ``describe() -> (generator, detail)`` for ``GET /api/settings``."""
+
     def run(self, job: JobInput, progress: ProgressFn) -> JobResult:
         """Generate every requested mode x difficulty, with lighting, and package the zip."""
         ...

@@ -9,7 +9,8 @@ unmodded unless the test needs Chroma.
 
 - [ ] Generate with the build under test and note the command, commit and checkpoint:
   `bsmapper generate song.mp3 --install` (add `--model`, `--style`, `--seed` as used).
-- [ ] Note the CLI's per-difficulty line: NPS, NJS/offset, rule errors and warnings.
+- [ ] Note the CLI's per-difficulty line: NPS, NJS/offset, rule errors and warnings. In the
+  web UI, the table under the track has the same numbers, and **Settings used** the options.
 - [ ] Pick at least one song you know well, so you can tell when the map ignores the music.
 - [ ] Play Hard, Expert and Expert+ in that order. Easy and Normal are low priority: a quick
   check that they load and are calmer is enough.

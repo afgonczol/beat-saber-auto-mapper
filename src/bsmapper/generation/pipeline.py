@@ -537,10 +537,14 @@ class Pipeline:
         *,
         zip_output: bool = True,
         progress: ProgressFn = _no_progress,
+        title: str | None = None,
+        artist: str | None = None,
     ) -> PipelineResult:
+        """Analyse, generate and package one song. ``title`` / ``artist`` replace the ones
+        read from the file's tags (or its "Artist - Title" name)."""
         opts = opts or GenerateOptions()
         progress("analyze", 0.02, "Analysing audio")
-        song = self.analyze(Path(audio))
+        song = self.analyze(Path(audio), title, artist)
         notes = song_notes(song)
         progress("analyze", 0.1, f"{song.bpm:g} BPM, {song.analysis.duration_s:.0f} s")
         beatmap, results = self.build(song, opts, progress)

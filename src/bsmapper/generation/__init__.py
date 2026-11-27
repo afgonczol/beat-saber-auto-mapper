@@ -10,7 +10,7 @@ placeholder notes (**not** ML) when there is no model. See docs/GENERATION.md.
 """
 
 from bsmapper.generation.density import target_nps
-from bsmapper.generation.install import GameConfig, install_map, load_config
+from bsmapper.generation.install import GameConfig, install_map, load_config, uninstall_map
 from bsmapper.generation.model import ModelGenerator, ModelSettings, RuleMasker, song_features
 from bsmapper.generation.njs import (
     JUMP_TABLE,
@@ -56,6 +56,7 @@ __all__ = [
     "find_checkpoint",
     "fix_with_rules",
     "install_map",
+    "uninstall_map",
     "load_config",
     "make_pipeline",
     "njs_and_offset",

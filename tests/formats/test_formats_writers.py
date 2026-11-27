@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from bsmapper.formats import read_map, write_map
+from bsmapper.formats import read_map, set_song_info, write_map
 from bsmapper.schema import (
     BasicEvent,
     Beatmap,
@@ -190,3 +190,15 @@ def test_chroma_suggestion(tmp_path):
 def test_unknown_version_rejected(tmp_path):
     with pytest.raises(ValueError):
         write_map(small_beatmap(), tmp_path, "v5")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("version", ["v3", "v4"])
+def test_set_song_info_changes_only_title_and_artist(tmp_path: Path, version: str) -> None:
+    beatmap = small_beatmap(song_author="Someone")
+    write_map(beatmap, tmp_path, version, song_duration=10.0)
+    before = {p.name: p.read_text("utf-8") for p in tmp_path.iterdir() if p.name != "Info.dat"}
+    set_song_info(tmp_path, "New Title", "New Artist")
+    back = read_map(tmp_path)
+    assert (back.song_name, back.song_author) == ("New Title", "New Artist")
+    after = {p.name: p.read_text("utf-8") for p in tmp_path.iterdir() if p.name != "Info.dat"}
+    assert after == before

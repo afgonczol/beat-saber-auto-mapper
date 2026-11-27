@@ -31,7 +31,8 @@ npm run gen:api                      # rewrite src/api/schema.d.ts from it
 
 | Endpoint | What |
 | --- | --- |
-| `GET /api/jobs` | every job, oldest first (the queue order); the queue panel polls this. Jobs last until the server restarts |
+| `GET /api/jobs` | every job, oldest first (the queue order); the queue panel polls this. Jobs are saved in their folders and restored when the server starts again |
+| `GET /api/settings` | the defaults a job gets for options it leaves out (from `~/.bsmapper/config.toml`), where notes come from, and whether `CustomLevels` is found |
 | `POST /api/jobs` | multipart: `audio` file + `modes`, `difficulties` (repeat the field), `lighting` (`vanilla`/`v3`/`chroma`), `style` (0 flowy .. 1 technical, omit for none), `seed`, ..., `install` (`true`: copy into the game when done). One song per request; post several to queue a batch. Jobs run one at a time |
 | `GET /api/jobs/{id}` | status (`queued`/`running`/`done`/`failed`/`cancelled`), stage, progress, `last_seq`, `installed` / `install_error` |
 | `DELETE /api/jobs/{id}` | take a job off the list (and the queue) and delete its files; 409 while running |
@@ -41,12 +42,15 @@ npm run gen:api                      # rewrite src/api/schema.d.ts from it
 | `GET /api/jobs/{id}/audio` | the song for playback: the packaged `song.egg` (aligned with the map's beats) once the map is ready, else the upload |
 | `GET /api/jobs/{id}/download` | the game-ready zip |
 | `POST /api/jobs/{id}/regenerate` | one difficulty with a new seed/temperature; follow it on `/events` |
+| `POST /api/jobs/{id}/rerun` | queue the song again as a new job from the stored upload, with the same or new `options` (retry, or make it again) |
+| `PUT /api/jobs/{id}/song` | rename the song (`title`, `artist`) in Info.dat and the zip; replaces the installed copy |
 | `POST /api/jobs/{id}/install` | copies the map into `CustomLevels` ("Install to game"); returns the installed `path` and `warnings` (e.g. Chroma lighting without `Chroma.dll`). 503 if `CustomLevels` is not found: see the config in [docs/GENERATION.md](../docs/GENERATION.md#install) |
 
 ## Layout
 
 - `src/api/`: generated types and the fetch/SSE client
 - `src/useJob.ts`: job state (status, events, map) and regenerate
+- `src/options.ts`: the options form state, the `JobOptions` it sends, and the copy remembered in `localStorage`
 - `src/components/`: upload + options, progress, preview page, timeline, warnings
 - `src/preview/TrackScene.ts`: three.js track, driven by the `<audio>` element's clock
 - `src/preview/LightRig.ts`: basic-event lights (back/ring/left/right/center, ring spin,

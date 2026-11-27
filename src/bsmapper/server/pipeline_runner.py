@@ -96,6 +96,16 @@ class PipelineJobRunner:
             self._pipeline = make_pipeline()
         return self._pipeline
 
+    def describe(self) -> tuple[str, str]:
+        """Where notes come from ("model" or "stub") and the checkpoint or fallback reason."""
+        if self._pipeline is None:
+            return "not loaded", "loads with the first song"
+        setup = self._pipeline.setup
+        if setup is None:
+            return getattr(self._pipeline.generator, "name", "custom"), ""
+        detail = setup.checkpoint.as_posix() if setup.checkpoint else setup.reason
+        return setup.generator, detail
+
     # --- JobRunner -------------------------------------------------------------------
 
     def run(self, job: JobInput, progress: ProgressFn) -> JobResult:
@@ -153,7 +163,7 @@ class PipelineJobRunner:
     def _song(self, job: JobInput, refresh: bool = False) -> Song:
         song = None if refresh else self._songs.get(job.job_id)
         if song is None:
-            song = self.pipeline.analyze(job.audio_path)
+            song = self.pipeline.analyze(job.audio_path, job.options.title, job.options.artist)
         self._songs[job.job_id] = song
         self._songs.move_to_end(job.job_id)
         while len(self._songs) > self.max_cached_songs:

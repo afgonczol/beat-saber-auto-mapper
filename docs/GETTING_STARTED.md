@@ -59,6 +59,7 @@ bsmapper generate "C:\Music\My Song.mp3" --install
 | `--light-style` | The look of the model's lights, with a `light_v2` checkpoint: `auto` (picked for the song; another seed may pick another), `pulse`, `calm`, `scenes`, `flash`, `accent`, or `none` (the model's own choice). | `--light-style calm` |
 | `--lighting-source` | `model` or `rules`. If the model's lights are too jittery for a song, `rules` gives a calmer, simpler show. | `--lighting-source rules` |
 | `--seed` | A different seed gives a different map for the same song. | `--seed 7` |
+| `--title` / `--artist` | The song name the game shows, instead of the file's tags or name (one song at a time). | `--title "Stronger" --artist "Kanye West"` |
 | `--environment` | The Info.dat environment. With the human effect library (below) the default is one of its environments, picked for the song and the seed. | `--environment LizzoEnvironment` |
 | `--no-light-effects` | Use the old fixed group-lighting template instead of human effects. | `--no-light-effects` |
 
@@ -113,15 +114,33 @@ bsmapper serve
 ```
 
 In the page:
-1. Drop in a song.
+1. Drop in a song. For a single song you can type the **Title** and **Artist** the game
+   should show; left empty, they come from the file's tags (or an "Artist - Title" name).
 2. Pick difficulties, modes, lighting, intensity, style, repetition, arcs and chains.
    With v3 lighting, **Environment** picks the game environment (its look and colours).
    **Auto** picks one for each song; "few maps" marks environments whose light
-   effects come from fewer than 30 human maps.
-3. Watch the progress.
-4. Preview the map in 3D, synced to the music.
+   effects come from fewer than 30 human maps. The page remembers your options for next
+   time (**Reset** goes back to the standard ones), and "default" shows the value from your
+   config file, e.g. *default (0.80)* for intensity.
+3. Watch the progress. The browser tab's title shows it too, so you can switch away.
+4. Preview the map in 3D, synced to the music:
+   - **Space** plays and pauses, **← / →** jump 5 seconds, **Shift + ← / →** one beat,
+     **Home** goes back to the start. **0.5× / 0.75×** slow the song down to look at fast
+     patterns.
+   - **Spawn like the game** shows notes only from when they appear in the game (the
+     reaction time), so you can judge whether it is comfortable. Untick it to see further
+     down the track.
+   - The table under the track compares every difficulty: notes, NPS, NJS, reaction time and
+     warnings. Click a row to switch to it. The difficulty tabs show their warning counts.
+   - **Settings used** lists the options that made this map, so a good one can be made again.
 5. Click **Download** or **Install to game**. You can regenerate a single difficulty with
    a new seed.
+6. **Edit** next to the song title fixes its title and artist (for example to drop
+   "(Official Video)"). The zip is renamed and, if the map was installed, the game copy is
+   replaced. Nothing is generated again.
+7. **Make again with other options…** queues the whole song again, without uploading it,
+   starting from this map's options: change the seed, intensity, difficulties or anything
+   else. The earlier map stays in the queue to compare.
 
 ### Queue lots of songs
 
@@ -140,11 +159,20 @@ stage and progress), done, failed (with the error) or cancelled.
   same for all of them. Clearing deletes the server's copy, but installed maps stay in the
   game.
 - Click a song's name or **Open** to get its normal result page: preview, **Download** and
-  **Install to game**. The **.zip** button downloads it straight from the queue.
+  **Install to game**. The **.zip** button downloads it straight from the queue, and
+  **Install** copies it into the game. **Install all** installs every finished map that is
+  not in the game yet. Songs show their title and artist once their map exists.
+- **Again…** makes a finished song again with other options (see step 7 above). A failed
+  song has **Retry** (same options) and **Edit…** (other options); **Retry failed** retries
+  all of them.
+- The header line says how long the rest of the queue should take, from how long the songs
+  so far took.
 - While you are on a song's page, the header button (**Queue (3 left) · new songs**) goes
   back to the queue.
-- The queue lives in the server, so reloading or closing the page loses nothing. Restarting
-  the server (closing the `bsmapper-web.cmd` window) clears it, so let a batch finish first.
+- The queue is saved on disk (`out\server`), so reloading the page, closing it, or even
+  restarting the server loses nothing: finished maps come back, and songs that were waiting
+  or running when the server stopped are queued again. **Clear finished** (or ✕) is how a
+  song leaves the list for good.
 
 A full song with all five Standard difficulties takes about a minute and a half on the 3090.
 The UI is already built (`web\dist`). After pulling web changes, rebuild it with
@@ -178,6 +206,14 @@ intensity = 0.8
 [PLAYTEST.md](PLAYTEST.md) has a checklist: sync, flow, vision blocks, difficulty,
 repetition, reaction time and lights. Notes like "Expert felt one step too easy" or "the
 lights jitter around 1:40" turn directly into fixes.
+
+After playing a map made in the web UI, open its page and use the **Playtest** box:
+**👍 Good** or **👎 Needs work**, plus a note. It saves on its own and stays with the map
+(the queue shows the thumb). To read every note later, with the options that made each map:
+
+```powershell
+bsmapper feedback
+```
 
 ## Known limitations
 

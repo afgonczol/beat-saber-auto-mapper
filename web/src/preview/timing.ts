@@ -62,3 +62,11 @@ export function formatTime(seconds: number): string {
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
+
+/** Seconds from a note spawning to reaching the player, as the game computes it (generation/njs.py). */
+export function reactionTime(njs: number, offset: number, bpm: number): number {
+  const secondsPerBeat = 60 / bpm;
+  let hjd = 4;
+  while (njs * secondsPerBeat * hjd > 17.999) hjd /= 2;
+  return Math.max(hjd + offset, 0.25) * secondsPerBeat;
+}

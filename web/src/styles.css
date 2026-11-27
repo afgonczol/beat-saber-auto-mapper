@@ -222,3 +222,55 @@ a.queue-name:hover { text-decoration: underline; }
 }
 .light-style { display: block; margin-top: 10px; font-size: 0.92rem; color: var(--muted); }
 .light-style select { margin-left: 6px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: inherit; }
+
+/* Usability pass: options header, hints, remake, preview extras */
+.options-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: -6px; }
+.hint { font-size: 0.84rem; margin-top: 8px; overflow-wrap: anywhere; }
+.hint.warn, .warn { color: var(--warn); }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.banner.warn { background: rgba(255, 176, 32, 0.1); color: var(--warn); }
+.dropzone.remake { cursor: default; }
+.dropzone.remake .muted { max-width: 420px; }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+.tab-count { font-size: 0.7rem; font-weight: 650; min-width: 18px; padding: 0 5px; border-radius: 999px; background: rgba(255, 176, 32, 0.18); color: var(--warn); }
+.transport-options { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: 0.88rem; color: var(--muted); }
+.transport-options .inline-toggle { margin-left: 0; }
+.segmented.small { grid-template-columns: repeat(3, 56px); }
+.segmented.small label { padding: 4px; font-size: 0.82rem; }
+
+.diff-table { padding: 8px 10px; overflow-x: auto; }
+.diff-table table { width: 100%; border-collapse: collapse; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+.diff-table th { text-align: left; font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 4px 8px; }
+.diff-table td { padding: 6px 8px; border-top: 1px solid var(--line); white-space: nowrap; }
+.diff-table tbody tr { cursor: pointer; }
+.diff-table tbody tr:hover { background: var(--panel-2); }
+.diff-table tbody tr.on { background: rgba(124, 108, 255, 0.14); }
+.diff-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: var(--muted); }
+.diff-dot.diff-Easy { background: #3ddc97; }
+.diff-dot.diff-Normal { background: #4fb3ff; }
+.diff-dot.diff-Hard { background: #ffa53d; }
+.diff-dot.diff-Expert { background: #ff4d6a; }
+.diff-dot.diff-ExpertPlus { background: #b36bff; }
+
+.song-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.song-title h2 { flex: 1; min-width: 0; }
+.song-edit { display: grid; gap: 8px; margin-top: 6px; }
+.song-edit label { display: grid; gap: 4px; font-size: 0.82rem; color: var(--muted); }
+.song-edit input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+.song-edit .button-row { justify-content: flex-start; }
+.actions > .button:last-child { grid-column: 1 / -1; }
+.settings-used summary { cursor: pointer; font-weight: 650; font-size: 0.95rem; }
+.settings-used dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: 0.85rem; }
+.settings-used dl div { display: contents; }
+.settings-used dt { color: var(--muted); }
+.settings-used dd { margin: 0; overflow-wrap: anywhere; }
+.song-name { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(100%, 460px); margin-top: 8px; cursor: default; text-align: left; }
+.song-name label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.song-name input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; min-width: 0; }
+.playtest { display: grid; gap: 10px; }
+.playtest textarea { width: 100%; resize: vertical; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 0.9rem; }
+.button-row.left { justify-content: flex-start; }
+.button.good { border-color: var(--ok); background: rgba(61, 220, 151, 0.15); }
+.button.bad { border-color: var(--warn); background: rgba(255, 176, 32, 0.15); }
+.small-text { font-size: 0.78rem; font-weight: 400; }

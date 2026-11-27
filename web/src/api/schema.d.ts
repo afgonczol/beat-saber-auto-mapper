@@ -25,6 +25,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Settings
+         * @description Defaults for the options a job leaves out, where notes come from, and where maps
+         *     install (``~/.bsmapper/config.toml``).
+         */
+        get: operations["get_settings_api_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -194,6 +215,73 @@ export interface paths {
          * @description Redo one difficulty with a new seed/temperature. Follow it on /events.
          */
         post: operations["job_regenerate_api_jobs__job_id__regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Job Rerun
+         * @description Queue the song again as a new job, from the upload the server already has.
+         *
+         *     Use it to retry a failed song, or to make the whole map again with other options or
+         *     a new seed. The source job stays as it is.
+         */
+        post: operations["job_rerun_api_jobs__job_id__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/song": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Job Song Info
+         * @description Change the song title and artist of a finished map (what the game lists).
+         *
+         *     The map is not generated again. If it was installed, the game copy is replaced.
+         */
+        put: operations["job_song_info_api_jobs__job_id__song_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{job_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Job Feedback
+         * @description Save a playtest rating and notes for the map (``rating`` 0 and no note clears it).
+         *
+         *     They are kept in the job's ``job.json``, so they outlive the browser and the server.
+         */
+        put: operations["job_feedback_api_jobs__job_id__feedback_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -429,6 +517,16 @@ export interface components {
              */
             environment?: string | null;
             /**
+             * Title
+             * @description Song title; omit to read it from the file.
+             */
+            title?: string | null;
+            /**
+             * Artist
+             * @description Song artist; omit to read it from the file.
+             */
+            artist?: string | null;
+            /**
              * Install
              * @description Copy the map into the game as soon as it is generated.
              * @default false
@@ -596,6 +694,30 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /**
+         * Feedback
+         * @description What the player thought of the map after playing it (docs/PLAYTEST.md).
+         */
+        Feedback: {
+            /**
+             * Rating
+             * @description 1 = good, -1 = needs work, 0 = none.
+             * @default 0
+             * @enum {integer}
+             */
+            rating: -1 | 0 | 1;
+            /**
+             * Note
+             * @description What they noticed.
+             * @default
+             */
+            note: string;
+            /**
+             * Updated At
+             * @description Set by the server.
+             */
+            updated_at?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -614,6 +736,34 @@ export interface components {
              * @default []
              */
             warnings: string[];
+        };
+        /** InstallTarget */
+        InstallTarget: {
+            /**
+             * Path
+             * @description Beat Saber's CustomLevels folder (from the config file).
+             */
+            path: string;
+            /**
+             * Found
+             * @description The folder exists, so maps can be installed.
+             */
+            found: boolean;
+            /**
+             * Chroma
+             * @description The Chroma mod is installed.
+             */
+            chroma: boolean;
+            /**
+             * Config
+             * @description The config file that sets the folder.
+             */
+            config: string;
+            /**
+             * Error
+             * @description Why the config could not be read.
+             */
+            error?: string | null;
         };
         /** Issue */
         Issue: {
@@ -688,6 +838,35 @@ export interface components {
              * @default 0
              */
             last_seq: number;
+            /**
+             * Title
+             * @description Song title of the generated map ('' before).
+             * @default
+             */
+            title: string;
+            /**
+             * Artist
+             * @description Song artist of the generated map.
+             * @default
+             */
+            artist: string;
+            /**
+             * Started At
+             * @description When the latest run started.
+             */
+            started_at?: string | null;
+            /**
+             * Finished At
+             * @description When the latest run ended (done, failed or cancelled).
+             */
+            finished_at?: string | null;
+            /**
+             * Source Id
+             * @description The job this one was remade from (POST .../rerun).
+             */
+            source_id?: string | null;
+            /** @description Playtest rating and notes. */
+            feedback?: components["schemas"]["Feedback"] | null;
         };
         /**
          * JobOptions
@@ -766,12 +945,32 @@ export interface components {
              * @description Info.dat environment (its look and colours), e.g. LizzoEnvironment, from GET /api/environments; null = picked for each song.
              */
             environment?: string | null;
+            /**
+             * Title
+             * @description Song title in the map; null = from the file's tags, else its name.
+             */
+            title?: string | null;
+            /**
+             * Artist
+             * @description Song artist in the map; null = from the file's tags, else its name.
+             */
+            artist?: string | null;
         };
         /**
          * JobStatus
          * @enum {string}
          */
         JobStatus: "queued" | "running" | "done" | "failed" | "cancelled";
+        /** JumpDefaults */
+        JumpDefaults: {
+            /** Njs */
+            njs: number;
+            /**
+             * Reaction Time
+             * @description Seconds from spawn to strike.
+             */
+            reaction_time: number;
+        };
         /** Lightshow */
         Lightshow: {
             /** Basic Events */
@@ -854,6 +1053,20 @@ export interface components {
             temperature: number;
         };
         /**
+         * RerunRequest
+         * @description Make the song again as a new job, from the upload the server already has.
+         */
+        RerunRequest: {
+            /** @description Options for the new job; null = the same as the source job. */
+            options?: components["schemas"]["JobOptions"] | null;
+            /**
+             * Install
+             * @description Copy the new map into the game when done.
+             * @default false
+             */
+            install: boolean;
+        };
+        /**
          * RotationEvent
          * @description 90/360 rotation. ``degrees`` is relative and a multiple of 15.
          */
@@ -867,6 +1080,63 @@ export interface components {
              * @default true
              */
             early: boolean;
+        };
+        /**
+         * ServerSettings
+         * @description What the server generates with when a job leaves an option out.
+         */
+        ServerSettings: {
+            /**
+             * Generator
+             * @description Where notes come from: model, stub or mock.
+             */
+            generator: string;
+            /**
+             * Generator Detail
+             * @description Checkpoint, or why it fell back.
+             * @default
+             */
+            generator_detail: string;
+            /** Intensity */
+            intensity: number;
+            /**
+             * Repetition
+             * @description null = the learned amount.
+             */
+            repetition: number | null;
+            /** Light Style */
+            light_style: string;
+            /**
+             * Arcs
+             * @description null = from Hard up.
+             */
+            arcs: boolean | null;
+            /**
+             * Chains
+             * @description null = from Expert up.
+             */
+            chains: boolean | null;
+            /**
+             * Jump
+             * @description Default NJS and reaction time per difficulty, config overrides included.
+             */
+            jump: {
+                [key: string]: components["schemas"]["JumpDefaults"];
+            };
+            install: components["schemas"]["InstallTarget"];
+        };
+        /**
+         * SongInfo
+         * @description The song title and artist the game shows for the map.
+         */
+        SongInfo: {
+            /** Title */
+            title: string;
+            /**
+             * Artist
+             * @default
+             */
+            artist: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -938,6 +1208,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentInfo"][];
+                };
+            };
+        };
+    };
+    get_settings_api_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerSettings"];
                 };
             };
         };
@@ -1356,6 +1646,156 @@ export interface operations {
             };
             /** @description Job is busy. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_rerun_api_jobs__job_id__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RerunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description No such job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The uploaded song is gone. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_song_info_api_jobs__job_id__song_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SongInfo"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description No such job. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The job has no finished map yet. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_feedback_api_jobs__job_id__feedback_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Feedback"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobInfo"];
+                };
+            };
+            /** @description No such job. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

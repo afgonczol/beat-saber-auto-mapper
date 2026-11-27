@@ -33,6 +33,29 @@
         }
       }
     },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "jobs",
+          "options"
+        ],
+        "summary": "Get Settings",
+        "description": "Defaults for the options a job leaves out, where notes come from, and where maps\ninstall (``~/.bsmapper/config.toml``).",
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs": {
       "get": {
         "tags": [
@@ -594,6 +617,215 @@
         }
       }
     },
+    "/api/jobs/{job_id}/rerun": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Rerun",
+        "description": "Queue the song again as a new job, from the upload the server already has.\n\nUse it to retry a failed song, or to make the whole map again with other options or\na new seed. The source job stays as it is.",
+        "operationId": "job_rerun_api_jobs__job_id__rerun_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The uploaded song is gone.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/song": {
+      "put": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Song Info",
+        "description": "Change the song title and artist of a finished map (what the game lists).\n\nThe map is not generated again. If it was installed, the game copy is replaced.",
+        "operationId": "job_song_info_api_jobs__job_id__song_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SongInfo"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The job has no finished map yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/{job_id}/feedback": {
+      "put": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Feedback",
+        "description": "Save a playtest rating and notes for the map (``rating`` 0 and no note clears it).\n\nThey are kept in the job's ``job.json``, so they outlive the browser and the server.",
+        "operationId": "job_feedback_api_jobs__job_id__feedback_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Feedback"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/jobs/{job_id}/install": {
       "post": {
         "tags": [
@@ -1073,6 +1305,32 @@
             "title": "Environment",
             "description": "Info.dat environment for v3 lighting (GET /api/environments); omit to pick one for each song."
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Song title; omit to read it from the file."
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist",
+            "description": "Song artist; omit to read it from the file."
+          },
           "install": {
             "type": "string",
             "enum": [
@@ -1446,6 +1704,44 @@
         "title": "EventBoxGroup",
         "description": "v3 group lighting. ``boxes`` stays loosely typed until the lighting\nworkstream refines it; renderers own the per-environment group ids."
       },
+      "Feedback": {
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "enum": [
+              -1,
+              0,
+              1
+            ],
+            "title": "Rating",
+            "description": "1 = good, -1 = needs work, 0 = none.",
+            "default": 0
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Note",
+            "description": "What they noticed.",
+            "default": ""
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "Set by the server."
+          }
+        },
+        "type": "object",
+        "title": "Feedback",
+        "description": "What the player thought of the map after playing it (docs/PLAYTEST.md)."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1481,6 +1777,50 @@
           "path"
         ],
         "title": "InstallResult"
+      },
+      "InstallTarget": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Beat Saber's CustomLevels folder (from the config file)."
+          },
+          "found": {
+            "type": "boolean",
+            "title": "Found",
+            "description": "The folder exists, so maps can be installed."
+          },
+          "chroma": {
+            "type": "boolean",
+            "title": "Chroma",
+            "description": "The Chroma mod is installed."
+          },
+          "config": {
+            "type": "string",
+            "title": "Config",
+            "description": "The config file that sets the folder."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Why the config could not be read."
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "found",
+          "chroma",
+          "config"
+        ],
+        "title": "InstallTarget"
       },
       "Issue": {
         "properties": {
@@ -1605,6 +1945,67 @@
             "title": "Last Seq",
             "description": "seq of the latest event; pass it as ?after= to follow new ones.",
             "default": 0
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Song title of the generated map ('' before).",
+            "default": ""
+          },
+          "artist": {
+            "type": "string",
+            "title": "Artist",
+            "description": "Song artist of the generated map.",
+            "default": ""
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "When the latest run started."
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "When the latest run ended (done, failed or cancelled)."
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id",
+            "description": "The job this one was remade from (POST .../rerun)."
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Feedback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Playtest rating and notes."
           }
         },
         "type": "object",
@@ -1785,6 +2186,32 @@
             ],
             "title": "Environment",
             "description": "Info.dat environment (its look and colours), e.g. LizzoEnvironment, from GET /api/environments; null = picked for each song."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Song title in the map; null = from the file's tags, else its name."
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist",
+            "description": "Song artist in the map; null = from the file's tags, else its name."
           }
         },
         "type": "object",
@@ -1801,6 +2228,25 @@
         ],
         "title": "JobStatus",
         "type": "string"
+      },
+      "JumpDefaults": {
+        "properties": {
+          "njs": {
+            "type": "number",
+            "title": "Njs"
+          },
+          "reaction_time": {
+            "type": "number",
+            "title": "Reaction Time",
+            "description": "Seconds from spawn to strike."
+          }
+        },
+        "type": "object",
+        "required": [
+          "njs",
+          "reaction_time"
+        ],
+        "title": "JumpDefaults"
       },
       "Lightshow": {
         "properties": {
@@ -1981,6 +2427,30 @@
         ],
         "title": "RegenerateRequest"
       },
+      "RerunRequest": {
+        "properties": {
+          "options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOptions"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Options for the new job; null = the same as the source job."
+          },
+          "install": {
+            "type": "boolean",
+            "title": "Install",
+            "description": "Copy the new map into the game when done.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "RerunRequest",
+        "description": "Make the song again as a new job, from the upload the server already has."
+      },
       "RotationEvent": {
         "properties": {
           "beat": {
@@ -2004,6 +2474,115 @@
         ],
         "title": "RotationEvent",
         "description": "90/360 rotation. ``degrees`` is relative and a multiple of 15."
+      },
+      "ServerSettings": {
+        "properties": {
+          "generator": {
+            "type": "string",
+            "title": "Generator",
+            "description": "Where notes come from: model, stub or mock."
+          },
+          "generator_detail": {
+            "type": "string",
+            "title": "Generator Detail",
+            "description": "Checkpoint, or why it fell back.",
+            "default": ""
+          },
+          "intensity": {
+            "type": "number",
+            "title": "Intensity"
+          },
+          "repetition": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition",
+            "description": "null = the learned amount."
+          },
+          "light_style": {
+            "type": "string",
+            "title": "Light Style"
+          },
+          "arcs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arcs",
+            "description": "null = from Hard up."
+          },
+          "chains": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chains",
+            "description": "null = from Expert up."
+          },
+          "jump": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JumpDefaults"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Difficulty"
+            },
+            "type": "object",
+            "title": "Jump",
+            "description": "Default NJS and reaction time per difficulty, config overrides included."
+          },
+          "install": {
+            "$ref": "#/components/schemas/InstallTarget"
+          }
+        },
+        "type": "object",
+        "required": [
+          "generator",
+          "intensity",
+          "repetition",
+          "light_style",
+          "arcs",
+          "chains",
+          "jump",
+          "install"
+        ],
+        "title": "ServerSettings",
+        "description": "What the server generates with when a job leaves an option out."
+      },
+      "SongInfo": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Title"
+          },
+          "artist": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Artist",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "SongInfo",
+        "description": "The song title and artist the game shows for the map."
       },
       "ValidationError": {
         "properties": {

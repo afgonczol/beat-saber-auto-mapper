@@ -75,6 +75,8 @@ def test_create_job_returns_options(client: TestClient) -> None:
         "njs": None,
         "reaction_time": None,
         "environment": None,
+        "title": None,
+        "artist": None,
     }
     info = upload(client, arcs="false", chains="true")
     assert (info["options"]["arcs"], info["options"]["chains"]) == (False, True)
